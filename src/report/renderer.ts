@@ -22,6 +22,20 @@ ${project.next_actions.map((action) => `${action.priority}. ${action.title} (${a
 `
     )
     .join("\n");
+  const collaboratorActions = report.collaborator_actions
+    .map((action) => `- ${action.collaborator}: ${action.action}\n  - ${action.reason}`)
+    .join("\n");
+  const taskReframes = report.task_reframes
+    .map(
+      (reframe) => `### ${reframe.original_task}
+
+${reframe.split_tasks.map((task) => `- [ ] ${task.title} (${task.owner}, ${task.type})`).join("\n")}
+`
+    )
+    .join("\n");
+  const suggestedUpdates = report.suggested_updates
+    .map((update) => `- ${update.file}: ${update.suggestion}`)
+    .join("\n");
 
   return `# PM Report - ${report.date}
 
@@ -40,6 +54,18 @@ ${report.today_focus.map((item) => `${item.priority}. ${item.action}\n   - ${ite
 ## Project Status
 
 ${projects}
+
+## Collaborator Actions
+
+${collaboratorActions || "- なし"}
+
+## Task Reframes
+
+${taskReframes || "- なし"}
+
+## Suggested Updates
+
+${suggestedUpdates || "- なし"}
 `;
 }
 
@@ -65,6 +91,8 @@ export function renderSuggestions(report: PMReport): string {
       return `## ${update.file ?? flexibleUpdate.target ?? "unknown"}
 
 ### ${update.type}
+
+Status: proposed
 
 Suggestion:
 ${flexibleUpdate.suggestion ?? "記録なし"}

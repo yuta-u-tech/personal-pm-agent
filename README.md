@@ -29,7 +29,9 @@ The generated report contract is file-based:
 - input: `ai/outputs/YYYY-MM-DD/context-pack.json`
 - schema: `ai/schemas/pm-report.schema.json`
 - output: `ai/outputs/YYYY-MM-DD/pm-report.json`
-- logs: `ai/outputs/YYYY-MM-DD/agent-run.log`
+- local logs: `ai/outputs/YYYY-MM-DD/agent-run.log`
+
+`agent-run.log` is local diagnostic output and should usually be ignored by Git.
 
 ## Repository Roles
 
