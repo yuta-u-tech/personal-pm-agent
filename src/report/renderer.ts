@@ -60,28 +60,43 @@ ${report.today_focus.map((item) => `${item.priority}. ${item.action}`).join("\n"
 
 export function renderSuggestions(report: PMReport): string {
   const updates = report.suggested_updates
-    .map(
-      (update) => `## ${update.file}
+    .map((update) => {
+      const flexibleUpdate = update as unknown as { target?: string; suggestion?: string };
+      return `## ${update.file ?? flexibleUpdate.target ?? "unknown"}
 
 ### ${update.type}
 
+Suggestion:
+${flexibleUpdate.suggestion ?? "記録なし"}
+
 Reason:
 ${update.reason}
-`
-    )
+`;
+    })
     .join("\n");
 
-  const reframes = report.task_reframes
-    .map(
-      (reframe) => `## Task Reframe: ${reframe.project_id}
+  const reframes = (report.task_reframes ?? [])
+    .map((reframe) => {
+      const splitTasks = Array.isArray(reframe.split_tasks)
+        ? reframe.split_tasks.map((task) => `- [ ] ${task.title} (${task.owner}, ${task.type})`)
+        : [];
+      const reframedAs = Array.isArray((reframe as unknown as { reframed_as?: unknown }).reframed_as)
+        ? ((reframe as unknown as { reframed_as: unknown[] }).reframed_as.map((task) => `- [ ] ${String(task)}`))
+        : [];
+      const items = splitTasks.length > 0 ? splitTasks : reframedAs;
+
+      return `## Task Reframe: ${reframe.project_id}
 
 Original:
 - ${reframe.original_task}
 
 Split:
-${reframe.split_tasks.map((task) => `- [ ] ${task.title} (${task.owner}, ${task.type})`).join("\n")}
-`
-    )
+${items.join("\n") || "- なし"}
+
+Reason:
+${(reframe as unknown as { reason?: string }).reason ?? "タスク粒度を進めやすくするため。"}
+`;
+    })
     .join("\n");
 
   return `# Suggested Ledger Updates - ${report.date}
@@ -91,4 +106,3 @@ ${updates || "更新提案はありません。"}
 ${reframes}
 `;
 }
-

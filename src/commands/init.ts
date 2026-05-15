@@ -55,7 +55,7 @@ function config(): string {
       "background-agent": {
         "type": "agent",
         "command": "codex",
-        "args": ["exec", "--cd", "{ledgerDir}", "--sandbox", "workspace-write", "--ask-for-approval", "never", "-"],
+        "args": ["exec", "--cd", "{ledgerDir}", "--sandbox", "workspace-write", "-"],
         "promptMode": "stdin",
         "timeoutMs": 300000,
         "allowedOutputs": [
