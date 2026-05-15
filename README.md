@@ -24,6 +24,13 @@ To use a background terminal agent, configure `pm-agent.config.json` in the ledg
 npm run pm-agent -- morning ../progress-ledger --adapter background-agent
 ```
 
+The generated report contract is file-based:
+
+- input: `ai/outputs/YYYY-MM-DD/context-pack.json`
+- schema: `ai/schemas/pm-report.schema.json`
+- output: `ai/outputs/YYYY-MM-DD/pm-report.json`
+- logs: `ai/outputs/YYYY-MM-DD/agent-run.log`
+
 ## Repository Roles
 
 - `personal-pm-agent`: CLI and agent implementation

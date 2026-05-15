@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "pm-agent": "tsx src/cli.ts",
+    "test": "npm run build && node --test dist/**/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
@@ -17,4 +18,3 @@
     "typescript": "^5.4.5"
   }
 }
-

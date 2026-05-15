@@ -55,8 +55,8 @@ function config(): string {
       "background-agent": {
         "type": "agent",
         "command": "codex",
-        "args": ["exec", "{prompt}"],
-        "promptMode": "argument",
+        "args": ["exec", "--cd", "{ledgerDir}", "--sandbox", "workspace-write", "--ask-for-approval", "never", "-"],
+        "promptMode": "stdin",
         "timeoutMs": 300000,
         "allowedOutputs": [
           "ai/outputs/{date}/pm-report.json"

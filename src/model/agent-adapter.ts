@@ -16,6 +16,7 @@ export class AgentAdapter implements ModelAdapter {
   async generate(request: ModelRequest): Promise<ModelResponse> {
     const runDir = path.dirname(request.outputPath);
     await mkdir(runDir, { recursive: true });
+    this.assertAllowedOutput(request);
 
     const promptPath = path.join(runDir, "agent-prompt.md");
     const logPath = path.join(runDir, "agent-run.log");
@@ -28,6 +29,8 @@ export class AgentAdapter implements ModelAdapter {
         .replaceAll("{outputPath}", request.outputPath)
         .replaceAll("{contextPackPath}", request.contextPackPath)
         .replaceAll("{schemaPath}", request.schemaPath)
+        .replaceAll("{ledgerDir}", request.ledgerDir)
+        .replaceAll("{date}", request.date)
     );
 
     const result = await runProcess({
@@ -55,6 +58,23 @@ export class AgentAdapter implements ModelAdapter {
       outputPath: request.outputPath
     };
   }
+
+  private assertAllowedOutput(request: ModelRequest): void {
+    const allowed = this.config.allowedOutputs ?? [];
+    if (allowed.length === 0) return;
+
+    const relativeOutput = path.relative(request.ledgerDir, request.outputPath);
+    const matched = allowed.some((pattern) => matchAllowedPattern(pattern, relativeOutput, request.date));
+    if (!matched) {
+      throw new Error(`Agent output is not allowed: ${relativeOutput}`);
+    }
+  }
+}
+
+function matchAllowedPattern(pattern: string, relativePath: string, date: string): boolean {
+  const normalizedPattern = pattern.replaceAll("{date}", date).split(path.sep).join("/");
+  const normalizedPath = relativePath.split(path.sep).join("/");
+  return normalizedPath === normalizedPattern;
 }
 
 async function runProcess(input: {
@@ -97,4 +117,3 @@ async function runProcess(input: {
     child.stdin.end();
   });
 }
-
