@@ -67,7 +67,7 @@ export type PMReport = {
   suggested_updates: Array<{
     file: string;
     type: string;
+    suggestion: string;
     reason: string;
   }>;
 };
-

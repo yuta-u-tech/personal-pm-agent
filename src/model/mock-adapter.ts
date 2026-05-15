@@ -117,6 +117,7 @@ function buildMockReport(date: string, context: ContextPack): PMReport {
       {
         file: "projects/pm-agent-blog.md",
         type: "status_update",
+        suggestion: "current_statusにMVP実装の進捗を追記する。",
         reason: "MVP実装の起点として、CLIとContext Pack生成が進んだため。"
       }
     ]
@@ -126,4 +127,3 @@ function buildMockReport(date: string, context: ContextPack): PMReport {
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
 }
-
