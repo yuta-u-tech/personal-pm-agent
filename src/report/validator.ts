@@ -16,6 +16,7 @@ export function validatePMReport(value: unknown): ValidationResult {
   requireArray(value, "today_focus", errors);
   requireArray(value, "collaborator_actions", errors);
   requireArray(value, "task_reframes", errors);
+  requireObject(value, "task_time_analysis", errors);
   requireString(value, "share_message", errors);
   requireArray(value, "suggested_updates", errors);
 
@@ -41,6 +42,38 @@ export function validatePMReport(value: unknown): ValidationResult {
       requireArray(project, "blockers", errors, `projects[${index}]`);
       requireArray(project, "next_actions", errors, `projects[${index}]`);
       requireArray(project, "collaborators", errors, `projects[${index}]`);
+      if (Array.isArray(project.blockers)) {
+        project.blockers.forEach((blocker, blockerIndex) => {
+          if (!isObject(blocker)) {
+            errors.push(`projects[${index}].blockers[${blockerIndex}] must be an object`);
+            return;
+          }
+          requireString(blocker, "title", errors, `projects[${index}].blockers[${blockerIndex}]`);
+          requireString(blocker, "reason", errors, `projects[${index}].blockers[${blockerIndex}]`);
+        });
+      }
+      if (Array.isArray(project.next_actions)) {
+        project.next_actions.forEach((action, actionIndex) => {
+          if (!isObject(action)) {
+            errors.push(`projects[${index}].next_actions[${actionIndex}] must be an object`);
+            return;
+          }
+          requireString(action, "title", errors, `projects[${index}].next_actions[${actionIndex}]`);
+          requireNumber(action, "priority", errors, `projects[${index}].next_actions[${actionIndex}]`);
+          requireString(action, "owner", errors, `projects[${index}].next_actions[${actionIndex}]`);
+        });
+      }
+      if (Array.isArray(project.collaborators)) {
+        project.collaborators.forEach((collaborator, collaboratorIndex) => {
+          if (!isObject(collaborator)) {
+            errors.push(`projects[${index}].collaborators[${collaboratorIndex}] must be an object`);
+            return;
+          }
+          requireString(collaborator, "id", errors, `projects[${index}].collaborators[${collaboratorIndex}]`);
+          requireString(collaborator, "role", errors, `projects[${index}].collaborators[${collaboratorIndex}]`);
+          requireArray(collaborator, "needed_for", errors, `projects[${index}].collaborators[${collaboratorIndex}]`);
+        });
+      }
     });
   }
 
@@ -65,6 +98,8 @@ export function validatePMReport(value: unknown): ValidationResult {
       requireNumber(focus, "priority", errors, `today_focus[${index}]`);
       requireString(focus, "action", errors, `today_focus[${index}]`);
       requireString(focus, "reason", errors, `today_focus[${index}]`);
+      requireString(focus, "task_category", errors, `today_focus[${index}]`);
+      requireNumber(focus, "estimated_minutes", errors, `today_focus[${index}]`);
     });
   }
 
@@ -99,9 +134,47 @@ export function validatePMReport(value: unknown): ValidationResult {
           requireString(task, "title", errors, `task_reframes[${index}].split_tasks[${taskIndex}]`);
           requireString(task, "owner", errors, `task_reframes[${index}].split_tasks[${taskIndex}]`);
           requireString(task, "type", errors, `task_reframes[${index}].split_tasks[${taskIndex}]`);
+          requireString(task, "task_category", errors, `task_reframes[${index}].split_tasks[${taskIndex}]`);
+          requireNumber(task, "estimated_minutes", errors, `task_reframes[${index}].split_tasks[${taskIndex}]`);
         });
       }
     });
+  }
+
+  if (isObject(value.task_time_analysis)) {
+    requireNumber(value.task_time_analysis, "total_estimated_minutes", errors, "task_time_analysis");
+    requireNumber(value.task_time_analysis, "total_actual_minutes", errors, "task_time_analysis");
+    requireNumber(value.task_time_analysis, "variance_minutes", errors, "task_time_analysis");
+    requireArray(value.task_time_analysis, "oversized_tasks", errors, "task_time_analysis");
+    requireArray(value.task_time_analysis, "categories", errors, "task_time_analysis");
+    requireString(value.task_time_analysis, "daily_notes", errors, "task_time_analysis");
+
+    if (Array.isArray(value.task_time_analysis.oversized_tasks)) {
+      value.task_time_analysis.oversized_tasks.forEach((task, index) => {
+        if (!isObject(task)) {
+          errors.push(`task_time_analysis.oversized_tasks[${index}] must be an object`);
+          return;
+        }
+        requireString(task, "title", errors, `task_time_analysis.oversized_tasks[${index}]`);
+        requireNumber(task, "estimated_minutes", errors, `task_time_analysis.oversized_tasks[${index}]`);
+        requireString(task, "reason", errors, `task_time_analysis.oversized_tasks[${index}]`);
+        requireArray(task, "suggested_split", errors, `task_time_analysis.oversized_tasks[${index}]`);
+      });
+    }
+
+    if (Array.isArray(value.task_time_analysis.categories)) {
+      value.task_time_analysis.categories.forEach((category, index) => {
+        if (!isObject(category)) {
+          errors.push(`task_time_analysis.categories[${index}] must be an object`);
+          return;
+        }
+        requireString(category, "category", errors, `task_time_analysis.categories[${index}]`);
+        requireNumber(category, "estimated_minutes", errors, `task_time_analysis.categories[${index}]`);
+        requireNumber(category, "actual_minutes", errors, `task_time_analysis.categories[${index}]`);
+        requireNumber(category, "task_count", errors, `task_time_analysis.categories[${index}]`);
+        requireString(category, "notes", errors, `task_time_analysis.categories[${index}]`);
+      });
+    }
   }
 
   if (Array.isArray(value.suggested_updates)) {

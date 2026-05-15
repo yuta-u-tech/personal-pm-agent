@@ -29,8 +29,18 @@ ${project.next_actions.map((action) => `${action.priority}. ${action.title} (${a
     .map(
       (reframe) => `### ${reframe.original_task}
 
-${reframe.split_tasks.map((task) => `- [ ] ${task.title} (${task.owner}, ${task.type})`).join("\n")}
+${reframe.split_tasks.map((task) => `- [ ] ${task.title} (${task.owner}, ${task.type}, ${task.estimated_minutes}分)`).join("\n")}
 `
+    )
+    .join("\n");
+  const timeCategories = report.task_time_analysis.categories
+    .map((category) => `- ${category.category}: 見積 ${category.estimated_minutes}分 / 実績 ${category.actual_minutes}分 / ${category.task_count}件\n  - ${category.notes}`)
+    .join("\n");
+  const oversizedTasks = report.task_time_analysis.oversized_tasks
+    .map(
+      (task) => `- ${task.title}: ${task.estimated_minutes}分
+  - ${task.reason}
+  - split: ${task.suggested_split.join(" / ")}`
     )
     .join("\n");
   const suggestedUpdates = report.suggested_updates
@@ -49,7 +59,25 @@ ${report.summary.message}
 
 ## Today's Focus
 
-${report.today_focus.map((item) => `${item.priority}. ${item.action}\n   - ${item.reason}`).join("\n")}
+${report.today_focus.map((item) => `${item.priority}. ${item.action} (${item.task_category}, ${item.estimated_minutes}分)\n   - ${item.reason}`).join("\n")}
+
+## Time Analysis
+
+Total Estimate: ${report.task_time_analysis.total_estimated_minutes}分
+Total Actual: ${report.task_time_analysis.total_actual_minutes}分
+Variance: ${report.task_time_analysis.variance_minutes}分
+
+### Categories
+
+${timeCategories || "- なし"}
+
+### Oversized Tasks
+
+${oversizedTasks || "- なし"}
+
+### Notes
+
+${report.task_time_analysis.daily_notes}
 
 ## Project Status
 
@@ -106,7 +134,7 @@ ${update.reason}
   const reframes = (report.task_reframes ?? [])
     .map((reframe) => {
       const splitTasks = Array.isArray(reframe.split_tasks)
-        ? reframe.split_tasks.map((task) => `- [ ] ${task.title} (${task.owner}, ${task.type})`)
+        ? reframe.split_tasks.map((task) => `- [ ] ${task.title} (${task.owner}, ${task.type}, ${task.estimated_minutes}分)`)
         : [];
       const reframedAs = Array.isArray((reframe as unknown as { reframed_as?: unknown }).reframed_as)
         ? ((reframe as unknown as { reframed_as: unknown[] }).reframed_as.map((task) => `- [ ] ${String(task)}`))

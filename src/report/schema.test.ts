@@ -11,6 +11,7 @@ test("PM_REPORT_SCHEMA requires contract fields that the runtime validator check
     "today_focus",
     "collaborator_actions",
     "task_reframes",
+    "task_time_analysis",
     "share_message",
     "suggested_updates"
   ]);
@@ -25,5 +26,12 @@ test("PM_REPORT_SCHEMA requires contract fields that the runtime validator check
     "original_task",
     "split_tasks"
   ]);
+  assert.deepEqual(PM_REPORT_SCHEMA.properties.task_time_analysis.required, [
+    "total_estimated_minutes",
+    "total_actual_minutes",
+    "variance_minutes",
+    "oversized_tasks",
+    "categories",
+    "daily_notes"
+  ]);
 });
-

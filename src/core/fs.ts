@@ -36,7 +36,6 @@ export async function listMarkdownFiles(dir: string): Promise<string[]> {
 }
 
 export async function listRecentMarkdownFiles(dir: string, limit: number): Promise<string[]> {
-  const files = await listMarkdownFiles(dir);
+  const files = (await listMarkdownFiles(dir)).filter((file) => /\d{4}-\d{2}-\d{2}\.md$/.test(file));
   return files.slice(-limit);
 }
-

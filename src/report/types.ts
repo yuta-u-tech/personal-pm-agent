@@ -47,6 +47,8 @@ export type PMReport = {
     priority: number;
     action: string;
     reason: string;
+    task_category: string;
+    estimated_minutes: number;
   }>;
   collaborator_actions: Array<{
     collaborator: string;
@@ -61,8 +63,29 @@ export type PMReport = {
       title: string;
       owner: string;
       type: string;
+      task_category: string;
+      estimated_minutes: number;
     }>;
   }>;
+  task_time_analysis: {
+    total_estimated_minutes: number;
+    total_actual_minutes: number;
+    variance_minutes: number;
+    oversized_tasks: Array<{
+      title: string;
+      estimated_minutes: number;
+      reason: string;
+      suggested_split: string[];
+    }>;
+    categories: Array<{
+      category: string;
+      estimated_minutes: number;
+      actual_minutes: number;
+      task_count: number;
+      notes: string;
+    }>;
+    daily_notes: string;
+  };
   share_message: string;
   suggested_updates: Array<{
     file: string;

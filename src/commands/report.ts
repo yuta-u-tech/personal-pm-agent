@@ -7,6 +7,7 @@ import { readTextIfExists, writeJson } from "../core/fs.js";
 import { createAdapter } from "../model/index.js";
 import { buildRepairPrompt, buildReportPrompt } from "../report/prompt.js";
 import { renderDailyReport } from "../report/renderer.js";
+import { enrichTimeAnalysis } from "../report/time-analysis.js";
 import { assertPMReport, validatePMReport } from "../report/validator.js";
 import { collectCommand } from "./collect.js";
 
@@ -43,7 +44,8 @@ export async function reportCommand(targetDir: string, options: { adapter?: stri
     prompt
   });
 
-  let rawReport = JSON.parse(await readFile(outputPath, "utf8")) as unknown;
+  const contextPack = JSON.parse(await readFile(contextPackPath, "utf8")) as unknown;
+  let rawReport = enrichTimeAnalysis(JSON.parse(await readFile(outputPath, "utf8")) as unknown, contextPack);
   let validation = validatePMReport(rawReport);
 
   if (!validation.ok && adapter.name !== "mock") {
@@ -55,7 +57,7 @@ export async function reportCommand(targetDir: string, options: { adapter?: stri
       outputPath,
       prompt: buildRepairPrompt({ originalPrompt: prompt, outputPath, errors: validation.errors })
     });
-    rawReport = JSON.parse(await readFile(outputPath, "utf8")) as unknown;
+    rawReport = enrichTimeAnalysis(JSON.parse(await readFile(outputPath, "utf8")) as unknown, contextPack);
     validation = validatePMReport(rawReport);
   }
 
@@ -67,4 +69,3 @@ export async function reportCommand(targetDir: string, options: { adapter?: stri
     )
   );
 }
-
