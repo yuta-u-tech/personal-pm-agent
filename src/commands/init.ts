@@ -23,6 +23,7 @@ export async function initCommand(targetDir: string): Promise<void> {
 
   await Promise.all([
     writeTextIfMissing(path.join(targetDir, "README.md"), readme()),
+    writeTextIfMissing(path.join(targetDir, "pm-agent.config.json"), config()),
     writeTextIfMissing(path.join(targetDir, "tasks/active.md"), "# Active Tasks\n\n- [ ] PM report output contractを確定する\n"),
     writeTextIfMissing(path.join(targetDir, "tasks/waiting.md"), "# Waiting Tasks\n\n"),
     writeTextIfMissing(path.join(targetDir, "tasks/delegated.md"), "# Delegated Tasks\n\n"),
@@ -43,3 +44,26 @@ This repository stores project goals, current status, logs, collaborators, gener
 `;
 }
 
+function config(): string {
+  return `{
+  "model": {
+    "defaultAdapter": "mock",
+    "adapters": {
+      "mock": {
+        "type": "mock"
+      },
+      "background-agent": {
+        "type": "agent",
+        "command": "codex",
+        "args": ["exec", "{prompt}"],
+        "promptMode": "argument",
+        "timeoutMs": 300000,
+        "allowedOutputs": [
+          "ai/outputs/{date}/pm-report.json"
+        ]
+      }
+    }
+  }
+}
+`;
+}

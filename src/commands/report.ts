@@ -1,0 +1,70 @@
+import path from "node:path";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { loadConfig } from "../core/config.js";
+import { today } from "../core/date.js";
+import { readTextIfExists, writeJson } from "../core/fs.js";
+import { createAdapter } from "../model/index.js";
+import { buildRepairPrompt, buildReportPrompt } from "../report/prompt.js";
+import { renderDailyReport } from "../report/renderer.js";
+import { assertPMReport, validatePMReport } from "../report/validator.js";
+import { collectCommand } from "./collect.js";
+
+export async function reportCommand(targetDir: string, options: { adapter?: string; date?: string } = {}): Promise<void> {
+  const date = options.date ?? today();
+  const outputDir = path.join(targetDir, "ai/outputs", date);
+  const contextPackPath = path.join(outputDir, "context-pack.json");
+  const schemaPath = path.join(targetDir, "ai/schemas/pm-report.schema.json");
+  const outputPath = path.join(outputDir, "pm-report.json");
+
+  if (!existsSync(contextPackPath)) {
+    await collectCommand(targetDir, date);
+  }
+
+  const config = await loadConfig(targetDir);
+  const adapter = createAdapter(config, options.adapter);
+  const systemPrompt = (await readTextIfExists(path.join(targetDir, "ai/prompts/system.md"))) ?? "";
+  const reportPrompt = (await readTextIfExists(path.join(targetDir, "ai/prompts/report.md"))) ?? "";
+  const prompt = buildReportPrompt({
+    date,
+    contextPackPath,
+    schemaPath,
+    outputPath,
+    systemPrompt,
+    reportPrompt
+  });
+
+  await adapter.generate({
+    date,
+    ledgerDir: targetDir,
+    contextPackPath,
+    schemaPath,
+    outputPath,
+    prompt
+  });
+
+  let rawReport = JSON.parse(await readFile(outputPath, "utf8")) as unknown;
+  let validation = validatePMReport(rawReport);
+
+  if (!validation.ok && adapter.name !== "mock") {
+    await adapter.generate({
+      date,
+      ledgerDir: targetDir,
+      contextPackPath,
+      schemaPath,
+      outputPath,
+      prompt: buildRepairPrompt({ originalPrompt: prompt, outputPath, errors: validation.errors })
+    });
+    rawReport = JSON.parse(await readFile(outputPath, "utf8")) as unknown;
+    validation = validatePMReport(rawReport);
+  }
+
+  const report = assertPMReport(rawReport);
+  await writeJson(outputPath, report);
+  await import("node:fs/promises").then(({ writeFile, mkdir }) =>
+    mkdir(path.join(targetDir, "reports/daily"), { recursive: true }).then(() =>
+      writeFile(path.join(targetDir, "reports/daily", `${date}.md`), renderDailyReport(report), "utf8")
+    )
+  );
+}
+

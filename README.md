@@ -14,11 +14,17 @@ The first MVP focuses on:
 npm install
 npm run build
 npm run pm-agent -- init ../progress-ledger
-npm run pm-agent -- collect ../progress-ledger
+npm run pm-agent -- morning ../progress-ledger
+```
+
+The default adapter is `mock`, so the MVP flow can be tested without an API contract.
+To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:
+
+```sh
+npm run pm-agent -- morning ../progress-ledger --adapter background-agent
 ```
 
 ## Repository Roles
 
 - `personal-pm-agent`: CLI and agent implementation
 - `progress-ledger`: private progress ledger data
-
