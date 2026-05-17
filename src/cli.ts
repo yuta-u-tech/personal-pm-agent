@@ -8,13 +8,19 @@ import { suggestCommand } from "./commands/suggest.js";
 import { taskCommand } from "./commands/task.js";
 import { assertDateString } from "./core/date.js";
 import { resolveTarget } from "./core/fs.js";
+import { startShell } from "./shell.js";
 
 async function main(): Promise<void> {
   const [, , command, ...args] = process.argv;
   const parsed = parseArgs(args);
   const targetDir = resolveTarget(parsed.target);
 
-  if (!command || command === "--help" || command === "-h") {
+  if (!command || command === "shell") {
+    await startShell(resolveTarget(command === "shell" ? parsed.target : parsed.target ?? "../progress-ledger"));
+    return;
+  }
+
+  if (command === "--help" || command === "-h") {
     printHelp();
     return;
   }
@@ -79,6 +85,7 @@ Usage:
   pm-agent task [ledger-dir] add --list active --title "Task title"
   pm-agent task [ledger-dir] move --from active --to done --title "Task title"
   pm-agent task [ledger-dir] list [--list active]
+  pm-agent shell [ledger-dir]
 `);
 }
 

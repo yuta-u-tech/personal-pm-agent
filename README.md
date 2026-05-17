@@ -36,6 +36,24 @@ npm run pm-agent -- task ../progress-ledger import --number 1 --list active
 
 `task discover` reads repositories from `links/repositories.md`, writes selectable candidates to `tasks/candidates.json`, and keeps that file out of Git by default.
 
+Interactive shell:
+
+```sh
+npm run pm-agent -- shell ../progress-ledger
+```
+
+Then use short commands:
+
+```txt
+/status
+/morning
+/tasks active
+/discover personal-pm-agent
+/import 1 --list active
+/add "Progress Ledger構成図のラフを作る" --list active
+/exit
+```
+
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:
 
