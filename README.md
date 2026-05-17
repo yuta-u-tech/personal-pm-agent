@@ -17,6 +17,7 @@ npm run build
 npm run pm-agent -- setup
 npm run pm-agent -- init ../progress-ledger
 npm run pm-agent -- morning ../progress-ledger
+npm run pm-agent -- dashboard ../progress-ledger
 ```
 
 `setup` is the recommended first run after cloning this repository. It checks `gh auth status`, creates a private `progress-ledger` GitHub repository when missing, clones or reuses `../progress-ledger`, initializes the ledger structure, commits it, and pushes it.
@@ -94,6 +95,16 @@ npm run pm-agent -- report ../progress-ledger --open
 npm run pm-agent -- share ../progress-ledger --open
 npm run pm-agent -- suggest ../progress-ledger --open
 ```
+
+Dashboard:
+
+```sh
+npm run pm-agent -- dashboard ../progress-ledger
+npm run pm-agent -- dashboard ../progress-ledger --port 4790
+npm run pm-agent -- dashboard ../progress-ledger --no-open
+```
+
+The dashboard is a local-only browser UI for reading the ledger. It shows status, daily reports, share drafts, suggestions, task lists, and generated file lists from the selected date.
 
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:

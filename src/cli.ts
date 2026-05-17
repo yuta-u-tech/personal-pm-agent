@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { collectCommand } from "./commands/collect.js";
+import { dashboardCommand } from "./commands/dashboard.js";
 import { initCommand } from "./commands/init.js";
 import { morningCommand } from "./commands/morning.js";
 import { reportCommand } from "./commands/report.js";
@@ -43,6 +44,12 @@ async function main(): Promise<void> {
   if (command === "collect") {
     await collectCommand(targetDir);
     console.log(`Collected context: ${targetDir}`);
+    return;
+  }
+
+  if (command === "dashboard") {
+    const message = await dashboardCommand(targetDir, parsed.options);
+    console.log(message);
     return;
   }
 
@@ -91,6 +98,7 @@ Usage:
   pm-agent init [ledger-dir]
   pm-agent setup [ledger-dir] [--ledger-name progress-ledger] [--private|--public] [--owner github-user] [--no-github]
   pm-agent collect [ledger-dir]
+  pm-agent dashboard [ledger-dir] [--port 4783] [--no-open]
   pm-agent report [ledger-dir] [--adapter mock|background-agent] [--open]
   pm-agent share [ledger-dir] [--open]
   pm-agent suggest [ledger-dir] [--open]
@@ -121,6 +129,7 @@ function parseArgs(args: string[]): {
     visibility?: "private" | "public";
     github?: boolean;
     open?: boolean;
+    port?: string;
     id?: string;
     number?: string;
   };
@@ -139,6 +148,7 @@ function parseArgs(args: string[]): {
     visibility?: "private" | "public";
     github?: boolean;
     open?: boolean;
+    port?: string;
     id?: string;
     number?: string;
   } = {};
@@ -211,6 +221,15 @@ function parseArgs(args: string[]): {
     }
     if (arg === "--open") {
       options.open = true;
+      continue;
+    }
+    if (arg === "--no-open") {
+      options.open = false;
+      continue;
+    }
+    if (arg === "--port") {
+      options.port = args[index + 1];
+      index += 1;
       continue;
     }
     if (arg === "--id") {
