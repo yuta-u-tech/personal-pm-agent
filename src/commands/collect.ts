@@ -1,21 +1,29 @@
 import path from "node:path";
 import { basename } from "node:path";
+import { loadConfig, type PmAgentConfig } from "../core/config.js";
+import { today } from "../core/date.js";
 import { collectGitSummary } from "../core/git.js";
 import { listMarkdownFiles, listRecentMarkdownFiles, readTextIfExists, writeJson } from "../core/fs.js";
 import { extractBullets, extractChecklist, extractSection, parseFrontmatter, parseRepositoryLinks } from "../core/markdown.js";
 import type { CollectedItem, ContextPack } from "../core/types.js";
 
 export async function collectCommand(targetDir: string, date = today()): Promise<void> {
+  const config = await loadConfig(targetDir);
+  const collectConfig = config.collect ?? {};
   const rawItems: CollectedItem[] = [];
 
-  const projectFiles = await listMarkdownFiles(path.join(targetDir, "projects"));
+  const projectFiles = isEnabled(collectConfig.projects) ? await listMarkdownFiles(path.join(targetDir, "projects")) : [];
   const projects = await Promise.all(projectFiles.map(async (file) => collectProject(file, rawItems)));
 
-  const tasks = await collectTasks(targetDir, rawItems);
-  const recentLogs = await collectRecentLogs(targetDir, rawItems);
-  const people = await collectPeople(targetDir, rawItems);
-  const repositories = await collectRepositories(targetDir, rawItems);
-  const previousReport = await collectPreviousReport(targetDir, date, rawItems);
+  const tasks = isEnabled(collectConfig.tasks) ? await collectTasks(targetDir, rawItems) : [];
+  const recentLogs = isEnabled(collectConfig.dailyLogs)
+    ? await collectRecentLogs(targetDir, rawItems, collectConfig.dailyLogs?.days ?? 7)
+    : [];
+  const people = isEnabled(collectConfig.people) ? await collectPeople(targetDir, rawItems) : [];
+  const repositories = isEnabled(collectConfig.repositories)
+    ? await collectRepositories(targetDir, rawItems, config)
+    : [];
+  const previousReport = isEnabled(collectConfig.previousReport) ? await collectPreviousReport(targetDir, date, rawItems) : null;
 
   const pack: ContextPack = {
     date,
@@ -91,8 +99,8 @@ async function collectTasks(targetDir: string, rawItems: CollectedItem[]): Promi
   return tasks;
 }
 
-async function collectRecentLogs(targetDir: string, rawItems: CollectedItem[]): Promise<Array<Record<string, unknown>>> {
-  const files = await listRecentMarkdownFiles(path.join(targetDir, "logs/daily"), 7);
+async function collectRecentLogs(targetDir: string, rawItems: CollectedItem[], days: number): Promise<Array<Record<string, unknown>>> {
+  const files = await listRecentMarkdownFiles(path.join(targetDir, "logs/daily"), days);
   const logs: Array<Record<string, unknown>> = [];
 
   for (const file of files) {
@@ -123,7 +131,11 @@ async function collectPeople(targetDir: string, rawItems: CollectedItem[]): Prom
     });
 }
 
-async function collectRepositories(targetDir: string, rawItems: CollectedItem[]): Promise<Array<Record<string, unknown>>> {
+async function collectRepositories(
+  targetDir: string,
+  rawItems: CollectedItem[],
+  config: PmAgentConfig
+): Promise<Array<Record<string, unknown>>> {
   const file = path.join(targetDir, "links/repositories.md");
   const markdown = (await readTextIfExists(file)) ?? "";
   if (!markdown.trim()) return [];
@@ -132,7 +144,7 @@ async function collectRepositories(targetDir: string, rawItems: CollectedItem[])
   const repositories: Array<Record<string, unknown> & { id?: string; path?: string; git: Record<string, unknown> | null }> = await Promise.all(
     links.map(async (repo) => ({
       ...repo,
-      git: repo.path ? await collectGitSummary(repo.path) : null
+      git: config.collect?.repositories?.includeGitStatus === false || !repo.path ? null : await collectGitSummary(repo.path)
     }))
   );
 
@@ -155,6 +167,10 @@ async function collectRepositories(targetDir: string, rawItems: CollectedItem[])
   }
 
   return repositories;
+}
+
+function isEnabled(config: { enabled?: boolean } | undefined): boolean {
+  return config?.enabled !== false;
 }
 
 async function collectPreviousReport(
@@ -200,8 +216,4 @@ async function readPreviousJson(
   }
 
   return null;
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }

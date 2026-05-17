@@ -54,6 +54,18 @@ function gitignore(): string {
 
 function config(): string {
   return `{
+  "collect": {
+    "projects": { "enabled": true },
+    "tasks": { "enabled": true },
+    "dailyLogs": { "enabled": true, "days": 7 },
+    "people": { "enabled": true },
+    "repositories": { "enabled": true, "includeGitStatus": true },
+    "previousReport": { "enabled": true }
+  },
+  "agentLogs": {
+    "save": true,
+    "gitIgnore": true
+  },
   "model": {
     "defaultAdapter": "mock",
     "adapters": {

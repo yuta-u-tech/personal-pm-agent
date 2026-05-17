@@ -33,17 +33,40 @@ export class AgentAdapter implements ModelAdapter {
         .replaceAll("{date}", request.date)
     );
 
-    const result = await runProcess({
-      command: this.config.command,
-      args,
-      cwd: request.ledgerDir,
-      stdin: this.config.promptMode === "stdin" ? request.prompt : undefined,
-      timeoutMs: request.timeoutMs ?? this.config.timeoutMs ?? 300_000
-    });
+    let result: { exitCode: number | null; log: string };
+    try {
+      result = await runProcess({
+        command: this.config.command,
+        args,
+        cwd: request.ledgerDir,
+        stdin: this.config.promptMode === "stdin" ? request.prompt : undefined,
+        timeoutMs: request.timeoutMs ?? this.config.timeoutMs ?? 300_000
+      });
+    } catch (error) {
+      throw new Error(
+        [
+          `Agent command failed before producing ${path.relative(request.ledgerDir, request.outputPath)}.`,
+          `adapter: ${this.name}`,
+          `command: ${this.config.command} ${args.join(" ")}`,
+          `next: check adapter command, timeoutMs, and authentication.`,
+          `cause: ${error instanceof Error ? error.message : String(error)}`
+        ].join("\n")
+      );
+    }
 
-    await writeFile(logPath, result.log, "utf8");
+    if (this.config.saveLog !== false) {
+      await writeFile(logPath, result.log, "utf8");
+    }
     if (result.exitCode !== 0) {
-      throw new Error(`Agent command failed with exit code ${result.exitCode}. See ${logPath}`);
+      throw new Error(
+        [
+          `Agent command failed with exit code ${result.exitCode}.`,
+          `adapter: ${this.name}`,
+          `output: ${path.relative(request.ledgerDir, request.outputPath)}`,
+          this.config.saveLog === false ? "log: disabled by config" : `log: ${logPath}`,
+          "next: inspect the log, then rerun with --adapter mock to isolate renderer/validator issues."
+        ].join("\n")
+      );
     }
 
     const text = await readFile(request.outputPath, "utf8");

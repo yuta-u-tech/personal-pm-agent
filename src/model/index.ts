@@ -6,6 +6,12 @@ import type { ModelAdapter } from "./types.js";
 
 export function createAdapter(config: PmAgentConfig, adapterName?: string): ModelAdapter {
   const resolved = resolveAdapterConfig(config, adapterName);
+  if (resolved.config.type === "agent") {
+    return adapterFromConfig(resolved.name, {
+      ...resolved.config,
+      saveLog: config.agentLogs?.save ?? resolved.config.saveLog ?? true
+    });
+  }
   return adapterFromConfig(resolved.name, resolved.config);
 }
 
@@ -14,4 +20,3 @@ function adapterFromConfig(name: string, config: AdapterConfig): ModelAdapter {
   if (config.type === "agent") return new AgentAdapter(name, config);
   throw new Error(`Unsupported adapter: ${name}`);
 }
-

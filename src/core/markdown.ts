@@ -1,19 +1,14 @@
+import matter from "gray-matter";
+
 export function parseFrontmatter(markdown: string): {
   frontmatter: Record<string, unknown>;
   body: string;
 } {
-  if (!markdown.startsWith("---\n")) {
-    return { frontmatter: {}, body: markdown.trim() };
-  }
-
-  const end = markdown.indexOf("\n---", 4);
-  if (end === -1) {
-    return { frontmatter: {}, body: markdown.trim() };
-  }
-
-  const raw = markdown.slice(4, end).trim();
-  const body = markdown.slice(end + 4).trim();
-  return { frontmatter: parseSimpleYaml(raw), body };
+  const parsed = matter(markdown);
+  return {
+    frontmatter: parsed.data,
+    body: parsed.content.trim()
+  };
 }
 
 export function extractSection(markdown: string, heading: string): string {
@@ -67,19 +62,3 @@ export function parseRepositoryLinks(markdown: string): Array<Record<string, str
   if (current) repos.push(current);
   return repos;
 }
-
-function parseSimpleYaml(raw: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  const lines = raw.split(/\r?\n/);
-
-  for (const line of lines) {
-    if (!line.trim() || line.startsWith(" ") || line.trim().startsWith("- ")) continue;
-    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (!match) continue;
-    const value = match[2].trim();
-    result[match[1]] = value === "" ? null : value;
-  }
-
-  return result;
-}
-

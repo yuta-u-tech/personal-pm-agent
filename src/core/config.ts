@@ -12,12 +12,25 @@ export type AdapterConfig =
       promptMode?: "stdin" | "argument";
       timeoutMs?: number;
       allowedOutputs?: string[];
+      saveLog?: boolean;
     };
 
 export type PmAgentConfig = {
   model?: {
     defaultAdapter?: string;
     adapters?: Record<string, AdapterConfig>;
+  };
+  collect?: {
+    projects?: { enabled?: boolean };
+    tasks?: { enabled?: boolean };
+    dailyLogs?: { enabled?: boolean; days?: number };
+    people?: { enabled?: boolean };
+    repositories?: { enabled?: boolean; includeGitStatus?: boolean };
+    previousReport?: { enabled?: boolean };
+  };
+  agentLogs?: {
+    save?: boolean;
+    gitIgnore?: boolean;
   };
 };
 
@@ -39,4 +52,3 @@ export function resolveAdapterConfig(config: PmAgentConfig, adapterName?: string
   }
   return { name, config: adapterConfig };
 }
-

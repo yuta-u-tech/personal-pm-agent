@@ -5,6 +5,7 @@ import { morningCommand } from "./commands/morning.js";
 import { reportCommand } from "./commands/report.js";
 import { shareCommand } from "./commands/share.js";
 import { suggestCommand } from "./commands/suggest.js";
+import { assertDateString } from "./core/date.js";
 import { resolveTarget } from "./core/fs.js";
 
 async function main(): Promise<void> {
@@ -83,7 +84,7 @@ function parseArgs(args: string[]): { target?: string; options: { adapter?: stri
       continue;
     }
     if (arg === "--date") {
-      options.date = args[index + 1];
+      options.date = assertDateString(args[index + 1] ?? "");
       index += 1;
       continue;
     }
