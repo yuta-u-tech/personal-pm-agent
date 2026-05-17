@@ -7,6 +7,7 @@ import { shareCommand } from "./commands/share.js";
 import { statusCommand } from "./commands/status.js";
 import { suggestCommand } from "./commands/suggest.js";
 import { taskCommand } from "./commands/task.js";
+import { openFile } from "./core/open.js";
 
 export async function startShell(targetDir: string): Promise<void> {
   const rl = readline.createInterface({ input, output, prompt: "pm-agent> " });
@@ -47,16 +48,19 @@ async function runShellCommand(targetDir: string, line: string): Promise<string>
     return "Collected context.";
   }
   if (command === "/report") {
-    await reportCommand(targetDir, { adapter: parseOption(args, "--adapter") ?? "background-agent" });
-    return "Generated PM report.";
+    const result = await reportCommand(targetDir, { adapter: parseOption(args, "--adapter") ?? "background-agent" });
+    const opened = await openUnlessDisabled(args, result.markdownPath);
+    return `Generated PM report${opened ? " and opened it" : ""}:\n- Markdown: ${result.markdownPath}\n- JSON: ${result.jsonPath}`;
   }
   if (command === "/share") {
-    await shareCommand(targetDir);
-    return "Generated share report.";
+    const result = await shareCommand(targetDir);
+    const opened = await openUnlessDisabled(args, result.markdownPath);
+    return `Generated share report${opened ? " and opened it" : ""}:\n- Markdown: ${result.markdownPath}`;
   }
   if (command === "/suggest") {
-    await suggestCommand(targetDir);
-    return "Generated suggestions.";
+    const result = await suggestCommand(targetDir);
+    const opened = await openUnlessDisabled(args, result.markdownPath);
+    return `Generated suggestions${opened ? " and opened it" : ""}:\n- Markdown: ${result.markdownPath}`;
   }
   if (command === "/morning") {
     await morningCommand(targetDir, { adapter: parseOption(args, "--adapter") ?? "background-agent" });
@@ -102,14 +106,24 @@ function tokenize(line: string): string[] {
   return matches.map((match) => match.replace(/^["']|["']$/g, ""));
 }
 
+async function openUnlessDisabled(args: string[], filePath: string): Promise<boolean> {
+  if (args.includes("--no-open")) return false;
+  try {
+    await openFile(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function helpText(): string {
   return `Commands:
 /status                 Show today's report summary
 /morning [--adapter background-agent|mock]
 /collect
-/report [--adapter background-agent|mock]
-/share
-/suggest
+/report [--adapter background-agent|mock] [--no-open]
+/share [--no-open]
+/suggest [--no-open]
 /tasks [active|waiting|delegated|backlog|done]
 /discover [repo-id]     Discover local task candidates from linked repos
 /discover github [repo-id]

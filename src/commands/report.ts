@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { loadConfig } from "../core/config.js";
 import { today } from "../core/date.js";
 import { readTextIfExists, writeJson } from "../core/fs.js";
@@ -11,12 +11,18 @@ import { enrichTimeAnalysis } from "../report/time-analysis.js";
 import { assertPMReport, validatePMReport } from "../report/validator.js";
 import { collectCommand } from "./collect.js";
 
-export async function reportCommand(targetDir: string, options: { adapter?: string; date?: string } = {}): Promise<void> {
+export type ReportCommandResult = {
+  jsonPath: string;
+  markdownPath: string;
+};
+
+export async function reportCommand(targetDir: string, options: { adapter?: string; date?: string } = {}): Promise<ReportCommandResult> {
   const date = options.date ?? today();
   const outputDir = path.join(targetDir, "ai/outputs", date);
   const contextPackPath = path.join(outputDir, "context-pack.json");
   const schemaPath = path.join(targetDir, "ai/schemas/pm-report.schema.json");
   const outputPath = path.join(outputDir, "pm-report.json");
+  const markdownPath = path.join(targetDir, "reports/daily", `${date}.md`);
 
   if (!existsSync(contextPackPath)) {
     await collectCommand(targetDir, date);
@@ -63,9 +69,7 @@ export async function reportCommand(targetDir: string, options: { adapter?: stri
 
   const report = assertPMReport(rawReport);
   await writeJson(outputPath, report);
-  await import("node:fs/promises").then(({ writeFile, mkdir }) =>
-    mkdir(path.join(targetDir, "reports/daily"), { recursive: true }).then(() =>
-      writeFile(path.join(targetDir, "reports/daily", `${date}.md`), renderDailyReport(report), "utf8")
-    )
-  );
+  await mkdir(path.dirname(markdownPath), { recursive: true });
+  await writeFile(markdownPath, renderDailyReport(report), "utf8");
+  return { jsonPath: outputPath, markdownPath };
 }

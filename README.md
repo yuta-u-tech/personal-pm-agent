@@ -79,6 +79,22 @@ Then use short commands:
 /exit
 ```
 
+In the interactive shell, `/report`, `/share`, and `/suggest` open the generated Markdown file automatically and also print the output path. Use `--no-open` when you only want to generate the file:
+
+```txt
+/report --no-open
+/share --no-open
+/suggest --no-open
+```
+
+Outside the shell, pass `--open` when you want the generated Markdown file to open automatically:
+
+```sh
+npm run pm-agent -- report ../progress-ledger --open
+npm run pm-agent -- share ../progress-ledger --open
+npm run pm-agent -- suggest ../progress-ledger --open
+```
+
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:
 

@@ -9,6 +9,7 @@ import { suggestCommand } from "./commands/suggest.js";
 import { taskCommand } from "./commands/task.js";
 import { assertDateString } from "./core/date.js";
 import { resolveTarget } from "./core/fs.js";
+import { openFile } from "./core/open.js";
 import { startShell } from "./shell.js";
 
 async function main(): Promise<void> {
@@ -46,20 +47,23 @@ async function main(): Promise<void> {
   }
 
   if (command === "report") {
-    await reportCommand(targetDir, parsed.options);
-    console.log(`Generated PM report: ${targetDir}`);
+    const result = await reportCommand(targetDir, parsed.options);
+    await maybeOpen(parsed.options.open, result.markdownPath);
+    console.log(`Generated PM report:\n- Markdown: ${result.markdownPath}\n- JSON: ${result.jsonPath}`);
     return;
   }
 
   if (command === "share") {
-    await shareCommand(targetDir, parsed.options);
-    console.log(`Generated share report: ${targetDir}`);
+    const result = await shareCommand(targetDir, parsed.options);
+    await maybeOpen(parsed.options.open, result.markdownPath);
+    console.log(`Generated share report:\n- Markdown: ${result.markdownPath}`);
     return;
   }
 
   if (command === "suggest") {
-    await suggestCommand(targetDir, parsed.options);
-    console.log(`Generated suggestions: ${targetDir}`);
+    const result = await suggestCommand(targetDir, parsed.options);
+    await maybeOpen(parsed.options.open, result.markdownPath);
+    console.log(`Generated suggestions:\n- Markdown: ${result.markdownPath}`);
     return;
   }
 
@@ -87,9 +91,9 @@ Usage:
   pm-agent init [ledger-dir]
   pm-agent setup [ledger-dir] [--ledger-name progress-ledger] [--private|--public] [--owner github-user] [--no-github]
   pm-agent collect [ledger-dir]
-  pm-agent report [ledger-dir] [--adapter mock|background-agent]
-  pm-agent share [ledger-dir]
-  pm-agent suggest [ledger-dir]
+  pm-agent report [ledger-dir] [--adapter mock|background-agent] [--open]
+  pm-agent share [ledger-dir] [--open]
+  pm-agent suggest [ledger-dir] [--open]
   pm-agent morning [ledger-dir] [--adapter mock|background-agent]
   pm-agent task [ledger-dir] add --list active --title "Task title"
   pm-agent task [ledger-dir] move --from active --to done --title "Task title"
@@ -116,6 +120,7 @@ function parseArgs(args: string[]): {
     owner?: string;
     visibility?: "private" | "public";
     github?: boolean;
+    open?: boolean;
     id?: string;
     number?: string;
   };
@@ -133,6 +138,7 @@ function parseArgs(args: string[]): {
     owner?: string;
     visibility?: "private" | "public";
     github?: boolean;
+    open?: boolean;
     id?: string;
     number?: string;
   } = {};
@@ -203,6 +209,10 @@ function parseArgs(args: string[]): {
       options.github = false;
       continue;
     }
+    if (arg === "--open") {
+      options.open = true;
+      continue;
+    }
     if (arg === "--id") {
       options.id = args[index + 1];
       index += 1;
@@ -218,6 +228,11 @@ function parseArgs(args: string[]): {
   }
 
   return { target, taskAction, options };
+}
+
+async function maybeOpen(shouldOpen: boolean | undefined, filePath: string): Promise<void> {
+  if (!shouldOpen) return;
+  await openFile(filePath);
 }
 
 main().catch((error) => {
