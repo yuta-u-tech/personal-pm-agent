@@ -92,6 +92,9 @@ function parseArgs(args: string[]): {
     title?: string;
     from?: string;
     to?: string;
+    repo?: string;
+    id?: string;
+    number?: string;
   };
 } {
   const options: {
@@ -101,6 +104,9 @@ function parseArgs(args: string[]): {
     title?: string;
     from?: string;
     to?: string;
+    repo?: string;
+    id?: string;
+    number?: string;
   } = {};
   let target: string | undefined;
   let taskAction: string | undefined;
@@ -134,6 +140,21 @@ function parseArgs(args: string[]): {
     }
     if (arg === "--to") {
       options.to = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--repo") {
+      options.repo = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--id") {
+      options.id = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--number") {
+      options.number = args[index + 1];
       index += 1;
       continue;
     }

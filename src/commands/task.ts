@@ -1,8 +1,13 @@
 import path from "node:path";
-import { readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { expandHome } from "../core/git.js";
+import { parseRepositoryLinks } from "../core/markdown.js";
 
 const TASK_LISTS = ["active", "waiting", "delegated", "backlog", "done"] as const;
+const execFileAsync = promisify(execFile);
 type TaskList = (typeof TASK_LISTS)[number];
 
 export type TaskCommandOptions = {
@@ -10,6 +15,19 @@ export type TaskCommandOptions = {
   title?: string;
   from?: string;
   to?: string;
+  repo?: string;
+  id?: string;
+  number?: string;
+};
+
+type TaskCandidate = {
+  id: string;
+  repo: string;
+  source: "git_status" | "todo";
+  title: string;
+  detail: string;
+  file?: string;
+  line?: number;
 };
 
 export async function taskCommand(
@@ -34,7 +52,15 @@ export async function taskCommand(
     return listTasks(targetDir, options.list ? assertTaskList(options.list) : undefined);
   }
 
-  throw new Error(`Unknown task action: ${action ?? "(missing)"}. Expected add, move, or list.`);
+  if (action === "discover") {
+    return discoverTasks(targetDir, options.repo);
+  }
+
+  if (action === "import") {
+    return importTaskCandidate(targetDir, assertTaskList(options.list ?? "active"), options);
+  }
+
+  throw new Error(`Unknown task action: ${action ?? "(missing)"}. Expected add, move, list, discover, or import.`);
 }
 
 async function addTask(targetDir: string, list: TaskList, title: string): Promise<string> {
@@ -94,6 +120,119 @@ async function listTasks(targetDir: string, list?: TaskList): Promise<string> {
   return sections.join("\n\n");
 }
 
+async function discoverTasks(targetDir: string, repoFilter?: string): Promise<string> {
+  const repositoriesFile = path.join(targetDir, "links/repositories.md");
+  const markdown = existsSync(repositoriesFile) ? await readFile(repositoriesFile, "utf8") : "";
+  const repositories = parseRepositoryLinks(markdown).filter((repo) => !repoFilter || repo.id === repoFilter);
+  const candidates: TaskCandidate[] = [];
+
+  for (const repo of repositories) {
+    if (!repo.id || !repo.path) continue;
+    const repoPath = expandHome(repo.path);
+    candidates.push(...(await discoverGitStatusCandidates(repo.id, repoPath)));
+    candidates.push(...(await discoverTodoCandidates(repo.id, repoPath)));
+  }
+
+  await writeCandidates(targetDir, candidates);
+  if (candidates.length === 0) {
+    return "No task candidates found.";
+  }
+
+  return candidates
+    .map((candidate, index) => `${index + 1}. [${candidate.id}] ${candidate.title}\n   ${candidate.detail}`)
+    .join("\n");
+}
+
+async function importTaskCandidate(targetDir: string, list: TaskList, options: TaskCommandOptions): Promise<string> {
+  const candidates = await readCandidates(targetDir);
+  const candidate = selectCandidate(candidates, options);
+  if (!candidate) {
+    throw new Error("Task candidate not found. Run `pm-agent task <ledger-dir> discover` first.");
+  }
+
+  await addTask(targetDir, list, candidate.title);
+  return `Imported candidate to ${list}: ${candidate.title}`;
+}
+
+async function discoverGitStatusCandidates(repoId: string, repoPath: string): Promise<TaskCandidate[]> {
+  try {
+    const { stdout } = await execFileAsync("git", ["status", "--short"], {
+      cwd: repoPath,
+      maxBuffer: 1024 * 1024
+    });
+    return stdout
+      .split(/\r?\n/)
+      .filter((line) => line.trim())
+      .slice(0, 20)
+      .map((line, index) => {
+        const file = line.slice(3).trim();
+        return {
+          id: `${repoId}:git:${index + 1}`,
+          repo: repoId,
+          source: "git_status" as const,
+          title: `Review ${file} changes in ${repoId}`,
+          detail: line,
+          file
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+async function discoverTodoCandidates(repoId: string, repoPath: string): Promise<TaskCandidate[]> {
+  try {
+    const { stdout } = await execFileAsync("rg", ["-n", "(//|#|<!--|/\\*)\\s*(TODO|FIXME|HACK|XXX)", "."], {
+      cwd: repoPath,
+      maxBuffer: 1024 * 1024
+    });
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 20)
+      .map((line, index) => {
+        const [file = "unknown", lineNumber = "0", ...rest] = line.split(":");
+        const text = rest.join(":").trim();
+        return {
+          id: `${repoId}:todo:${index + 1}`,
+          repo: repoId,
+          source: "todo" as const,
+          title: `Resolve TODO in ${repoId}/${file}:${lineNumber}`,
+          detail: text,
+          file,
+          line: Number(lineNumber)
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+async function writeCandidates(targetDir: string, candidates: TaskCandidate[]): Promise<void> {
+  const file = candidatesFile(targetDir);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify({ generated_at: new Date().toISOString(), candidates }, null, 2)}\n`, "utf8");
+}
+
+async function readCandidates(targetDir: string): Promise<TaskCandidate[]> {
+  const file = candidatesFile(targetDir);
+  if (!existsSync(file)) return [];
+  const parsed = JSON.parse(await readFile(file, "utf8")) as { candidates?: TaskCandidate[] };
+  return parsed.candidates ?? [];
+}
+
+function selectCandidate(candidates: TaskCandidate[], options: TaskCommandOptions): TaskCandidate | undefined {
+  if (options.id) {
+    return candidates.find((candidate) => candidate.id === options.id);
+  }
+  if (options.number) {
+    const index = Number(options.number) - 1;
+    return candidates[index];
+  }
+  throw new Error("Missing required option: --id or --number");
+}
+
 function findTaskLine(markdown: string, title: string): { line: string; index: number } | null {
   const lines = markdown.split(/\r?\n/);
   const normalizedTitle = normalizeTaskTitle(title);
@@ -137,6 +276,10 @@ function taskFile(targetDir: string, list: TaskList): string {
   return path.join(targetDir, "tasks", `${list}.md`);
 }
 
+function candidatesFile(targetDir: string): string {
+  return path.join(targetDir, "tasks", "candidates.json");
+}
+
 function assertTaskList(value: string): TaskList {
   if (TASK_LISTS.includes(value as TaskList)) return value as TaskList;
   throw new Error(`Invalid task list: ${value}. Expected one of ${TASK_LISTS.join(", ")}.`);
@@ -154,4 +297,3 @@ function titleForList(list: TaskList): string {
 function ensureTrailingNewline(value: string): string {
   return value.endsWith("\n") ? value : `${value}\n`;
 }
-

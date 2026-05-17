@@ -49,6 +49,7 @@ This repository stores project goals, current status, logs, collaborators, gener
 
 function gitignore(): string {
   return `ai/outputs/*/agent-run.log
+tasks/candidates.json
 `;
 }
 
