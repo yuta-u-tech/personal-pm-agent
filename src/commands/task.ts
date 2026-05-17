@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { parseGitHubRepoFullName } from "../core/github.js";
 import { expandHome } from "../core/git.js";
 import { parseRepositoryLinks } from "../core/markdown.js";
 
@@ -16,6 +17,7 @@ export type TaskCommandOptions = {
   from?: string;
   to?: string;
   repo?: string;
+  source?: string;
   id?: string;
   number?: string;
 };
@@ -23,11 +25,28 @@ export type TaskCommandOptions = {
 type TaskCandidate = {
   id: string;
   repo: string;
-  source: "git_status" | "todo";
+  source: "git_status" | "todo" | "github_issue" | "github_pr";
   title: string;
   detail: string;
+  url?: string;
   file?: string;
   line?: number;
+};
+
+type GitHubIssue = {
+  number: number;
+  title: string;
+  url: string;
+  labels?: Array<{ name?: string }>;
+  assignees?: Array<{ login?: string }>;
+};
+
+type GitHubPullRequest = {
+  number: number;
+  title: string;
+  url: string;
+  labels?: Array<{ name?: string }>;
+  author?: { login?: string };
 };
 
 export async function taskCommand(
@@ -53,7 +72,7 @@ export async function taskCommand(
   }
 
   if (action === "discover") {
-    return discoverTasks(targetDir, options.repo);
+    return discoverTasks(targetDir, options.repo, options.source);
   }
 
   if (action === "import") {
@@ -120,14 +139,25 @@ async function listTasks(targetDir: string, list?: TaskList): Promise<string> {
   return sections.join("\n\n");
 }
 
-async function discoverTasks(targetDir: string, repoFilter?: string): Promise<string> {
+async function discoverTasks(targetDir: string, repoFilter?: string, source = "local"): Promise<string> {
   const repositoriesFile = path.join(targetDir, "links/repositories.md");
   const markdown = existsSync(repositoriesFile) ? await readFile(repositoriesFile, "utf8") : "";
   const repositories = parseRepositoryLinks(markdown).filter((repo) => !repoFilter || repo.id === repoFilter);
   const candidates: TaskCandidate[] = [];
+  const normalizedSource = assertDiscoverySource(source);
+
+  if (repoFilter && repositories.length === 0) {
+    throw new Error(`Repository not found in links/repositories.md: ${repoFilter}`);
+  }
 
   for (const repo of repositories) {
-    if (!repo.id || !repo.path) continue;
+    if (!repo.id) continue;
+    if (normalizedSource === "github") {
+      candidates.push(...(await discoverGitHubCandidates(repo)));
+      continue;
+    }
+
+    if (!repo.path) continue;
     const repoPath = expandHome(repo.path);
     candidates.push(...(await discoverGitStatusCandidates(repo.id, repoPath)));
     candidates.push(...(await discoverTodoCandidates(repo.id, repoPath)));
@@ -135,12 +165,89 @@ async function discoverTasks(targetDir: string, repoFilter?: string): Promise<st
 
   await writeCandidates(targetDir, candidates);
   if (candidates.length === 0) {
-    return "No task candidates found.";
+    return normalizedSource === "github" ? "No GitHub task candidates found." : "No local task candidates found.";
   }
 
   return candidates
     .map((candidate, index) => `${index + 1}. [${candidate.id}] ${candidate.title}\n   ${candidate.detail}`)
     .join("\n");
+}
+
+async function discoverGitHubCandidates(repo: Record<string, string>): Promise<TaskCandidate[]> {
+  const fullName = await resolveGitHubRepoFullName(repo);
+  if (!fullName) {
+    throw new Error(
+      `Could not resolve GitHub repository for ${repo.id}. Add github: owner/name to links/repositories.md or set an origin remote.`
+    );
+  }
+
+  try {
+    const [issues, pullRequests] = await Promise.all([
+      ghJson<GitHubIssue[]>(["issue", "list", "--repo", fullName, "--state", "open", "--json", "number,title,url,labels,assignees"]),
+      ghJson<GitHubPullRequest[]>(["pr", "list", "--repo", fullName, "--state", "open", "--json", "number,title,url,labels,author"])
+    ]);
+
+    return [
+      ...issues.map((issue) => ({
+        id: `${repo.id}:issue:${issue.number}`,
+        repo: repo.id,
+        source: "github_issue" as const,
+        title: `Issue #${issue.number}: ${issue.title}`,
+        detail: formatGitHubIssueDetail(issue),
+        url: issue.url
+      })),
+      ...pullRequests.map((pullRequest) => ({
+        id: `${repo.id}:pr:${pullRequest.number}`,
+        repo: repo.id,
+        source: "github_pr" as const,
+        title: `Review PR #${pullRequest.number}: ${pullRequest.title}`,
+        detail: formatGitHubPullRequestDetail(pullRequest),
+        url: pullRequest.url
+      }))
+    ];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`GitHub discovery failed for ${fullName}. Check \`gh auth status\` and repository access. ${message}`);
+  }
+}
+
+async function resolveGitHubRepoFullName(repo: Record<string, string>): Promise<string | null> {
+  if (repo.github) return repo.github;
+  if (repo.full_name) return repo.full_name;
+  if (repo.id?.includes("/")) return repo.id;
+  if (!repo.path) return null;
+
+  try {
+    const { stdout } = await execFileAsync("git", ["remote", "get-url", "origin"], {
+      cwd: expandHome(repo.path),
+      maxBuffer: 1024 * 1024
+    });
+    return parseGitHubRepoFullName(stdout);
+  } catch {
+    return null;
+  }
+}
+
+async function ghJson<T>(args: string[]): Promise<T> {
+  const { stdout } = await execFileAsync("gh", args, { maxBuffer: 1024 * 1024 });
+  return JSON.parse(stdout) as T;
+}
+
+function formatGitHubIssueDetail(issue: GitHubIssue): string {
+  const labels = (issue.labels ?? []).map((label) => label.name).filter(Boolean).join(", ") || "none";
+  const assignees = (issue.assignees ?? []).map((assignee) => assignee.login).filter(Boolean).join(", ") || "unassigned";
+  return `${issue.url} | labels: ${labels} | assignees: ${assignees}`;
+}
+
+function formatGitHubPullRequestDetail(pullRequest: GitHubPullRequest): string {
+  const labels = (pullRequest.labels ?? []).map((label) => label.name).filter(Boolean).join(", ") || "none";
+  const author = pullRequest.author?.login ?? "unknown";
+  return `${pullRequest.url} | labels: ${labels} | author: ${author}`;
+}
+
+function assertDiscoverySource(source: string): "local" | "github" {
+  if (source === "local" || source === "github") return source;
+  throw new Error(`Unknown discovery source: ${source}. Expected local or github.`);
 }
 
 async function importTaskCandidate(targetDir: string, list: TaskList, options: TaskCommandOptions): Promise<string> {

@@ -85,6 +85,8 @@ Usage:
   pm-agent task [ledger-dir] add --list active --title "Task title"
   pm-agent task [ledger-dir] move --from active --to done --title "Task title"
   pm-agent task [ledger-dir] list [--list active]
+  pm-agent task [ledger-dir] discover [--source local|github] [--repo repo-id]
+  pm-agent task [ledger-dir] import --number 1 --list active
   pm-agent shell [ledger-dir]
 `);
 }
@@ -100,6 +102,7 @@ function parseArgs(args: string[]): {
     from?: string;
     to?: string;
     repo?: string;
+    source?: string;
     id?: string;
     number?: string;
   };
@@ -112,6 +115,7 @@ function parseArgs(args: string[]): {
     from?: string;
     to?: string;
     repo?: string;
+    source?: string;
     id?: string;
     number?: string;
   } = {};
@@ -152,6 +156,11 @@ function parseArgs(args: string[]): {
     }
     if (arg === "--repo") {
       options.repo = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--source") {
+      options.source = args[index + 1];
       index += 1;
       continue;
     }

@@ -31,10 +31,11 @@ npm run pm-agent -- task ../progress-ledger add --list active --title "Progress 
 npm run pm-agent -- task ../progress-ledger move --from active --to done --title "Progress Ledger構成図のラフを作る"
 npm run pm-agent -- task ../progress-ledger list --list active
 npm run pm-agent -- task ../progress-ledger discover --repo personal-pm-agent
+npm run pm-agent -- task ../progress-ledger discover --source github --repo personal-pm-agent
 npm run pm-agent -- task ../progress-ledger import --number 1 --list active
 ```
 
-`task discover` reads repositories from `links/repositories.md`, writes selectable candidates to `tasks/candidates.json`, and keeps that file out of Git by default.
+`task discover` reads repositories from `links/repositories.md`, writes selectable candidates to `tasks/candidates.json`, and keeps that file out of Git by default. The default source is `local`, which scans local Git status and TODO comments. Use `--source github` to scan open GitHub Issues and PRs through the authenticated `gh` CLI.
 
 Interactive shell:
 
@@ -49,6 +50,7 @@ Then use short commands:
 /morning
 /tasks active
 /discover personal-pm-agent
+/discover github personal-pm-agent
 /import 1 --list active
 /add "Progress Ledger構成図のラフを作る" --list active
 /exit
