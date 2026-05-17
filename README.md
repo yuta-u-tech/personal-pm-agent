@@ -32,10 +32,12 @@ npm run pm-agent -- task ../progress-ledger move --from active --to done --title
 npm run pm-agent -- task ../progress-ledger list --list active
 npm run pm-agent -- task ../progress-ledger discover --repo personal-pm-agent
 npm run pm-agent -- task ../progress-ledger discover --source github --repo personal-pm-agent
+npm run pm-agent -- task ../progress-ledger discover --source github --repo study-forge
+npm run pm-agent -- task ../progress-ledger discover --source github
 npm run pm-agent -- task ../progress-ledger import --number 1 --list active
 ```
 
-`task discover` reads repositories from `links/repositories.md`, writes selectable candidates to `tasks/candidates.json`, and keeps that file out of Git by default. The default source is `local`, which scans local Git status and TODO comments. Use `--source github` to scan open GitHub Issues and PRs through the authenticated `gh` CLI.
+`task discover` writes selectable candidates to `tasks/candidates.json` and keeps that file out of Git by default. The default source is `local`, which scans local Git status and TODO comments for repositories in `links/repositories.md`. Use `--source github` to scan open GitHub Issues and PRs through the authenticated `gh` CLI. GitHub discovery can target a repo from `links/repositories.md`, a repo name in your GitHub account, or all repos in your account when `--repo` is omitted.
 
 Interactive shell:
 
@@ -51,6 +53,8 @@ Then use short commands:
 /tasks active
 /discover personal-pm-agent
 /discover github personal-pm-agent
+/discover github study-forge
+/discover github
 /import 1 --list active
 /add "Progress Ledger構成図のラフを作る" --list active
 /exit

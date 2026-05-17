@@ -49,6 +49,16 @@ type GitHubPullRequest = {
   author?: { login?: string };
 };
 
+type GitHubRepository = {
+  id: string;
+  fullName: string;
+};
+
+type GitHubRepoListItem = {
+  name: string;
+  nameWithOwner: string;
+};
+
 export async function taskCommand(
   targetDir: string,
   action: string | undefined,
@@ -146,17 +156,32 @@ async function discoverTasks(targetDir: string, repoFilter?: string, source = "l
   const candidates: TaskCandidate[] = [];
   const normalizedSource = assertDiscoverySource(source);
 
+  if (normalizedSource === "github") {
+    const githubRepositories = await resolveGitHubDiscoveryRepositories(
+      parseRepositoryLinks(markdown),
+      repoFilter
+    );
+
+    for (const repo of githubRepositories) {
+      candidates.push(...(await discoverGitHubCandidates(repo)));
+    }
+
+    await writeCandidates(targetDir, candidates);
+    if (candidates.length === 0) {
+      return "No GitHub task candidates found.";
+    }
+
+    return candidates
+      .map((candidate, index) => `${index + 1}. [${candidate.id}] ${candidate.title}\n   ${candidate.detail}`)
+      .join("\n");
+  }
+
   if (repoFilter && repositories.length === 0) {
     throw new Error(`Repository not found in links/repositories.md: ${repoFilter}`);
   }
 
   for (const repo of repositories) {
     if (!repo.id) continue;
-    if (normalizedSource === "github") {
-      candidates.push(...(await discoverGitHubCandidates(repo)));
-      continue;
-    }
-
     if (!repo.path) continue;
     const repoPath = expandHome(repo.path);
     candidates.push(...(await discoverGitStatusCandidates(repo.id, repoPath)));
@@ -165,7 +190,7 @@ async function discoverTasks(targetDir: string, repoFilter?: string, source = "l
 
   await writeCandidates(targetDir, candidates);
   if (candidates.length === 0) {
-    return normalizedSource === "github" ? "No GitHub task candidates found." : "No local task candidates found.";
+    return "No local task candidates found.";
   }
 
   return candidates
@@ -173,18 +198,11 @@ async function discoverTasks(targetDir: string, repoFilter?: string, source = "l
     .join("\n");
 }
 
-async function discoverGitHubCandidates(repo: Record<string, string>): Promise<TaskCandidate[]> {
-  const fullName = await resolveGitHubRepoFullName(repo);
-  if (!fullName) {
-    throw new Error(
-      `Could not resolve GitHub repository for ${repo.id}. Add github: owner/name to links/repositories.md or set an origin remote.`
-    );
-  }
-
+async function discoverGitHubCandidates(repo: GitHubRepository): Promise<TaskCandidate[]> {
   try {
     const [issues, pullRequests] = await Promise.all([
-      ghJson<GitHubIssue[]>(["issue", "list", "--repo", fullName, "--state", "open", "--json", "number,title,url,labels,assignees"]),
-      ghJson<GitHubPullRequest[]>(["pr", "list", "--repo", fullName, "--state", "open", "--json", "number,title,url,labels,author"])
+      ghJson<GitHubIssue[]>(["issue", "list", "--repo", repo.fullName, "--state", "open", "--json", "number,title,url,labels,assignees"]),
+      ghJson<GitHubPullRequest[]>(["pr", "list", "--repo", repo.fullName, "--state", "open", "--json", "number,title,url,labels,author"])
     ]);
 
     return [
@@ -207,8 +225,32 @@ async function discoverGitHubCandidates(repo: Record<string, string>): Promise<T
     ];
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`GitHub discovery failed for ${fullName}. Check \`gh auth status\` and repository access. ${message}`);
+    throw new Error(`GitHub discovery failed for ${repo.fullName}. Check \`gh auth status\` and repository access. ${message}`);
   }
+}
+
+async function resolveGitHubDiscoveryRepositories(
+  linkedRepositories: Array<Record<string, string>>,
+  repoFilter?: string
+): Promise<GitHubRepository[]> {
+  if (repoFilter) {
+    const linked = linkedRepositories.find((repo) => repo.id === repoFilter || repo.github === repoFilter || repo.full_name === repoFilter);
+    if (linked) {
+      const fullName = await resolveGitHubRepoFullName(linked);
+      if (!fullName) {
+        throw new Error(
+          `Could not resolve GitHub repository for ${repoFilter}. Add github: owner/name to links/repositories.md or set an origin remote.`
+        );
+      }
+      return [{ id: linked.id ?? repoFilter, fullName }];
+    }
+
+    const githubRepo = await resolveGitHubRepositoryFromAccount(repoFilter);
+    if (githubRepo) return [githubRepo];
+    throw new Error(`GitHub repository not found: ${repoFilter}`);
+  }
+
+  return listGitHubRepositoriesFromAccount();
 }
 
 async function resolveGitHubRepoFullName(repo: Record<string, string>): Promise<string | null> {
@@ -226,6 +268,33 @@ async function resolveGitHubRepoFullName(repo: Record<string, string>): Promise<
   } catch {
     return null;
   }
+}
+
+async function resolveGitHubRepositoryFromAccount(repoFilter: string): Promise<GitHubRepository | null> {
+  if (repoFilter.includes("/")) {
+    return { id: repoFilter.split("/").at(-1) ?? repoFilter, fullName: repoFilter };
+  }
+
+  const repositories = await listGitHubRepositoriesFromAccount();
+  return repositories.find((repo) => repo.id === repoFilter || repo.fullName === repoFilter) ?? null;
+}
+
+async function listGitHubRepositoriesFromAccount(): Promise<GitHubRepository[]> {
+  const user = await ghJson<{ login: string }>(["api", "user"]);
+  const repositories = await ghJson<GitHubRepoListItem[]>([
+    "repo",
+    "list",
+    user.login,
+    "--limit",
+    "100",
+    "--json",
+    "name,nameWithOwner"
+  ]);
+
+  return repositories.map((repo) => ({
+    id: repo.name,
+    fullName: repo.nameWithOwner
+  }));
 }
 
 async function ghJson<T>(args: string[]): Promise<T> {
