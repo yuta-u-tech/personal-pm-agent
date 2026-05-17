@@ -11,6 +11,8 @@ export type DashboardOptions = {
   open?: boolean;
 };
 
+export type DashboardTab = "status" | "daily" | "share" | "suggestions" | "tasks" | "files";
+
 type DashboardData = {
   date: string;
   status: string;
@@ -25,8 +27,29 @@ type DashboardData = {
   };
 };
 
+const dashboardServers = new Map<string, http.Server>();
+
 export async function dashboardCommand(targetDir: string, options: DashboardOptions = {}): Promise<string> {
   const port = Number(options.port ?? "4783");
+  const url = await ensureDashboardServer(targetDir, port);
+  if (options.open !== false) {
+    await openFile(url);
+  }
+  return `Dashboard running: ${url}`;
+}
+
+export async function openDashboard(targetDir: string, tab: DashboardTab, date = today(), port = 4783): Promise<string> {
+  const url = await ensureDashboardServer(targetDir, port);
+  const viewUrl = `${url}/?tab=${encodeURIComponent(tab)}&date=${encodeURIComponent(date)}`;
+  await openFile(viewUrl);
+  return viewUrl;
+}
+
+async function ensureDashboardServer(targetDir: string, port: number): Promise<string> {
+  const url = `http://127.0.0.1:${port}`;
+  const key = `${targetDir}:${port}`;
+  if (dashboardServers.has(key)) return url;
+
   const server = http.createServer(async (request, response) => {
     try {
       await handleRequest(targetDir, request, response);
@@ -37,15 +60,20 @@ export async function dashboardCommand(targetDir: string, options: DashboardOpti
   });
 
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE") {
+        resolve();
+        return;
+      }
+      reject(error);
+    });
     server.listen(port, "127.0.0.1", () => resolve());
   });
 
-  const url = `http://127.0.0.1:${port}`;
-  if (options.open !== false) {
-    await openFile(url);
+  if (server.listening) {
+    dashboardServers.set(key, server);
   }
-  return `Dashboard running: ${url}`;
+  return url;
 }
 
 async function handleRequest(targetDir: string, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -364,7 +392,9 @@ function renderDashboardHtml(): string {
     </main>
   </div>
   <script>
-    const state = { tab: "status", data: null };
+    const params = new URLSearchParams(window.location.search);
+    const initialTab = params.get("tab") || "status";
+    const state = { tab: initialTab, data: null };
     const titles = {
       status: "Status",
       daily: "Daily Report",
@@ -380,10 +410,13 @@ function renderDashboardHtml(): string {
     const meta = document.getElementById("meta");
     const copyStatus = document.getElementById("copy-status");
 
-    dateInput.value = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+    dateInput.value = params.get("date") || new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 
     document.getElementById("refresh").addEventListener("click", load);
     document.getElementById("copy-view").addEventListener("click", () => copyText(currentViewText()));
+    document.querySelectorAll(".tab").forEach((button) => {
+      button.classList.toggle("active", button.dataset.tab === state.tab);
+    });
     document.querySelectorAll(".tab").forEach((button) => {
       button.addEventListener("click", () => {
         state.tab = button.dataset.tab;

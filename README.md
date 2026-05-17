@@ -80,7 +80,7 @@ Then use short commands:
 /exit
 ```
 
-In the interactive shell, `/report`, `/share`, and `/suggest` open the generated Markdown file automatically and also print the output path. Use `--no-open` when you only want to generate the file:
+In the interactive shell, `/report`, `/share`, and `/suggest` open the dashboard automatically on the matching tab and also print the generated file path. Use `--no-open` when you only want to generate the file:
 
 ```txt
 /report --no-open
