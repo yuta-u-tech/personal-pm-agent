@@ -5,6 +5,7 @@ import { morningCommand } from "./commands/morning.js";
 import { reportCommand } from "./commands/report.js";
 import { shareCommand } from "./commands/share.js";
 import { suggestCommand } from "./commands/suggest.js";
+import { taskCommand } from "./commands/task.js";
 import { assertDateString } from "./core/date.js";
 import { resolveTarget } from "./core/fs.js";
 
@@ -54,6 +55,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "task") {
+    const message = await taskCommand(targetDir, parsed.taskAction, parsed.options);
+    console.log(message);
+    return;
+  }
+
   console.error(`Unknown command: ${command}`);
   printHelp();
   process.exitCode = 1;
@@ -69,12 +76,34 @@ Usage:
   pm-agent share [ledger-dir]
   pm-agent suggest [ledger-dir]
   pm-agent morning [ledger-dir] [--adapter mock|background-agent]
+  pm-agent task [ledger-dir] add --list active --title "Task title"
+  pm-agent task [ledger-dir] move --from active --to done --title "Task title"
+  pm-agent task [ledger-dir] list [--list active]
 `);
 }
 
-function parseArgs(args: string[]): { target?: string; options: { adapter?: string; date?: string } } {
-  const options: { adapter?: string; date?: string } = {};
+function parseArgs(args: string[]): {
+  target?: string;
+  taskAction?: string;
+  options: {
+    adapter?: string;
+    date?: string;
+    list?: string;
+    title?: string;
+    from?: string;
+    to?: string;
+  };
+} {
+  const options: {
+    adapter?: string;
+    date?: string;
+    list?: string;
+    title?: string;
+    from?: string;
+    to?: string;
+  } = {};
   let target: string | undefined;
+  let taskAction: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -88,10 +117,31 @@ function parseArgs(args: string[]): { target?: string; options: { adapter?: stri
       index += 1;
       continue;
     }
+    if (arg === "--list") {
+      options.list = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--title") {
+      options.title = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--from") {
+      options.from = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--to") {
+      options.to = args[index + 1];
+      index += 1;
+      continue;
+    }
     if (!target) target = arg;
+    else if (!taskAction) taskAction = arg;
   }
 
-  return { target, options };
+  return { target, taskAction, options };
 }
 
 main().catch((error) => {

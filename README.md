@@ -24,6 +24,14 @@ npm run pm-agent -- morning ../progress-ledger
 npm run pm-agent -- morning ../progress-ledger --date 2026-05-18
 ```
 
+Task operations:
+
+```sh
+npm run pm-agent -- task ../progress-ledger add --list active --title "Progress Ledger構成図のラフを作る"
+npm run pm-agent -- task ../progress-ledger move --from active --to done --title "Progress Ledger構成図のラフを作る"
+npm run pm-agent -- task ../progress-ledger list --list active
+```
+
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:
 
