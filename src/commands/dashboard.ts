@@ -233,6 +233,19 @@ function renderDashboardHtml(): string {
       line-height: 1.25;
     }
 
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .copy-status {
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 48px;
+      text-align: right;
+    }
+
     .content {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -260,6 +273,25 @@ function renderDashboardHtml(): string {
     .block h3 {
       margin: 0 0 10px;
       font-size: 15px;
+    }
+
+    .block-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .block-head h3 {
+      margin: 0;
+    }
+
+    .copy-button {
+      width: max-content;
+      min-width: 64px;
+      padding: 0 10px;
+      font-size: 12px;
     }
 
     pre {
@@ -323,6 +355,10 @@ function renderDashboardHtml(): string {
     <main>
       <div class="toolbar">
         <h2 id="title">Status</h2>
+        <div class="toolbar-actions">
+          <button class="copy-button" id="copy-view" type="button">Copy View</button>
+          <span class="copy-status" id="copy-status"></span>
+        </div>
       </div>
       <section class="content" id="content"></section>
     </main>
@@ -342,10 +378,12 @@ function renderDashboardHtml(): string {
     const content = document.getElementById("content");
     const title = document.getElementById("title");
     const meta = document.getElementById("meta");
+    const copyStatus = document.getElementById("copy-status");
 
     dateInput.value = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 
     document.getElementById("refresh").addEventListener("click", load);
+    document.getElementById("copy-view").addEventListener("click", () => copyText(currentViewText()));
     document.querySelectorAll(".tab").forEach((button) => {
       button.addEventListener("click", () => {
         state.tab = button.dataset.tab;
@@ -375,8 +413,11 @@ function renderDashboardHtml(): string {
         content.innerHTML = markdownBlock(state.data.suggestions, "No suggestions. Run /suggest.");
       } else if (state.tab === "tasks") {
         content.innerHTML = '<div class="grid">' + Object.entries(state.data.tasks)
-          .map(([name, text]) => '<div class="block"><h3>' + escapeHtml(name) + '</h3>' + markdownBlock(text, "No tasks.") + '</div>')
+          .map(([name, text]) => '<div class="block"><div class="block-head"><h3>' + escapeHtml(name) + '</h3><button class="copy-button" type="button" data-copy-task="' + escapeHtml(name) + '">Copy</button></div>' + markdownBlock(text, "No tasks.") + '</div>')
           .join("") + '</div>';
+        content.querySelectorAll("[data-copy-task]").forEach((button) => {
+          button.addEventListener("click", () => copyText(state.data.tasks[button.dataset.copyTask] || ""));
+        });
       } else if (state.tab === "files") {
         content.innerHTML = filesBlock(state.data.files);
       }
@@ -389,10 +430,76 @@ function renderDashboardHtml(): string {
 
     function filesBlock(files) {
       return '<div class="grid">' + Object.entries(files)
-        .map(([name, items]) => '<div class="block"><h3>' + escapeHtml(name) + '</h3><div class="file-list">' +
+        .map(([name, items]) => '<div class="block"><div class="block-head"><h3>' + escapeHtml(name) + '</h3><button class="copy-button" type="button" data-copy-files="' + escapeHtml(name) + '">Copy</button></div><div class="file-list">' +
           (items.length ? items.map((item) => '<span>' + escapeHtml(item) + '</span>').join("") : '<span>No files.</span>') +
           '</div></div>')
         .join("") + '</div>';
+    }
+
+    content.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLButtonElement)) return;
+      const fileGroup = target.dataset.copyFiles;
+      if (fileGroup) {
+        copyText((state.data.files[fileGroup] || []).join("\\n"));
+      }
+    });
+
+    function currentViewText() {
+      if (!state.data) return "";
+      if (state.tab === "status") return state.data.status || "";
+      if (state.tab === "daily") return state.data.dailyReport || "";
+      if (state.tab === "share") return state.data.shareReport || "";
+      if (state.tab === "suggestions") return state.data.suggestions || "";
+      if (state.tab === "tasks") {
+        return Object.entries(state.data.tasks)
+          .map(([name, text]) => "# " + name + "\\n\\n" + (text || ""))
+          .join("\\n\\n");
+      }
+      if (state.tab === "files") {
+        return Object.entries(state.data.files)
+          .map(([name, items]) => "# " + name + "\\n" + items.join("\\n"))
+          .join("\\n\\n");
+      }
+      return "";
+    }
+
+    async function copyText(text) {
+      if (!text || !text.trim()) {
+        setCopyStatus("Empty");
+        return;
+      }
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          fallbackCopy(text);
+        }
+        setCopyStatus("Copied");
+      } catch {
+        fallbackCopy(text);
+        setCopyStatus("Copied");
+      }
+    }
+
+    function fallbackCopy(text) {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+
+    function setCopyStatus(message) {
+      copyStatus.textContent = message;
+      window.clearTimeout(setCopyStatus.timer);
+      setCopyStatus.timer = window.setTimeout(() => {
+        copyStatus.textContent = "";
+      }, 1400);
     }
 
     function escapeHtml(value) {
