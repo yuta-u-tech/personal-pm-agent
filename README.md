@@ -14,8 +14,27 @@ Personal PM Agent focuses on:
 ```sh
 npm install
 npm run build
+npm run pm-agent -- setup
 npm run pm-agent -- init ../progress-ledger
 npm run pm-agent -- morning ../progress-ledger
+```
+
+`setup` is the recommended first run after cloning this repository. It checks `gh auth status`, creates a private `progress-ledger` GitHub repository when missing, clones or reuses `../progress-ledger`, initializes the ledger structure, commits it, and pushes it.
+
+Setup options:
+
+```sh
+npm run pm-agent -- setup
+npm run pm-agent -- setup ../my-ledger --ledger-name my-ledger --private
+npm run pm-agent -- setup ../my-ledger --ledger-name my-ledger --public
+npm run pm-agent -- setup ../progress-ledger --owner github-user
+npm run pm-agent -- setup ../progress-ledger --no-github
+```
+
+GitHub setup requires the GitHub CLI:
+
+```sh
+gh auth login
 ```
 
 `morning` uses JST (`Asia/Tokyo`) for the default date. You can override it:

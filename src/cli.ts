@@ -4,6 +4,7 @@ import { initCommand } from "./commands/init.js";
 import { morningCommand } from "./commands/morning.js";
 import { reportCommand } from "./commands/report.js";
 import { shareCommand } from "./commands/share.js";
+import { setupCommand } from "./commands/setup.js";
 import { suggestCommand } from "./commands/suggest.js";
 import { taskCommand } from "./commands/task.js";
 import { assertDateString } from "./core/date.js";
@@ -28,6 +29,13 @@ async function main(): Promise<void> {
   if (command === "init") {
     await initCommand(targetDir);
     console.log(`Initialized progress ledger: ${targetDir}`);
+    return;
+  }
+
+  if (command === "setup") {
+    const setupTargetDir = resolveTarget(parsed.target ?? "../progress-ledger");
+    const message = await setupCommand(setupTargetDir, parsed.options);
+    console.log(message);
     return;
   }
 
@@ -77,6 +85,7 @@ function printHelp(): void {
 
 Usage:
   pm-agent init [ledger-dir]
+  pm-agent setup [ledger-dir] [--ledger-name progress-ledger] [--private|--public] [--owner github-user] [--no-github]
   pm-agent collect [ledger-dir]
   pm-agent report [ledger-dir] [--adapter mock|background-agent]
   pm-agent share [ledger-dir]
@@ -103,6 +112,10 @@ function parseArgs(args: string[]): {
     to?: string;
     repo?: string;
     source?: string;
+    ledgerName?: string;
+    owner?: string;
+    visibility?: "private" | "public";
+    github?: boolean;
     id?: string;
     number?: string;
   };
@@ -116,6 +129,10 @@ function parseArgs(args: string[]): {
     to?: string;
     repo?: string;
     source?: string;
+    ledgerName?: string;
+    owner?: string;
+    visibility?: "private" | "public";
+    github?: boolean;
     id?: string;
     number?: string;
   } = {};
@@ -162,6 +179,28 @@ function parseArgs(args: string[]): {
     if (arg === "--source") {
       options.source = args[index + 1];
       index += 1;
+      continue;
+    }
+    if (arg === "--ledger-name") {
+      options.ledgerName = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--owner") {
+      options.owner = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--private") {
+      options.visibility = "private";
+      continue;
+    }
+    if (arg === "--public") {
+      options.visibility = "public";
+      continue;
+    }
+    if (arg === "--no-github") {
+      options.github = false;
       continue;
     }
     if (arg === "--id") {
