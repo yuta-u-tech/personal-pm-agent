@@ -125,7 +125,7 @@ npm run pm-agent -- dashboard ../progress-ledger --port 4790
 npm run pm-agent -- dashboard ../progress-ledger --no-open
 ```
 
-The dashboard is a local-only browser UI for reading the ledger. It shows status, daily reports, share drafts, suggestions, task lists, and generated file lists from the selected date.
+The dashboard is a local-only browser UI for reading the ledger. It shows status, daily reports, share drafts, suggestions, task lists, repository context, repository links, and generated file lists from the selected date.
 
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:

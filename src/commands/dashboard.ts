@@ -11,7 +11,7 @@ export type DashboardOptions = {
   open?: boolean;
 };
 
-export type DashboardTab = "status" | "daily" | "share" | "suggestions" | "tasks" | "files";
+export type DashboardTab = "status" | "daily" | "share" | "suggestions" | "tasks" | "repositories" | "files";
 
 type DashboardData = {
   date: string;
@@ -19,6 +19,8 @@ type DashboardData = {
   dailyReport: string;
   shareReport: string;
   suggestions: string;
+  repositoryContext: string;
+  repositoryLinks: string;
   tasks: Record<string, string>;
   files: {
     dailyReports: string[];
@@ -103,6 +105,8 @@ async function readDashboardData(targetDir: string, date: string): Promise<Dashb
     dailyReport: await readText(path.join(targetDir, "reports/daily", `${date}.md`)),
     shareReport: await readText(path.join(targetDir, "reports/share", `${date}.md`)),
     suggestions: await readText(path.join(targetDir, "suggestions", `${date}.md`)),
+    repositoryContext: await readText(path.join(targetDir, "context/repositories.md")),
+    repositoryLinks: await readText(path.join(targetDir, "links/repositories.md")),
     tasks: {
       active: await readText(path.join(targetDir, "tasks/active.md")),
       waiting: await readText(path.join(targetDir, "tasks/waiting.md")),
@@ -376,6 +380,7 @@ function renderDashboardHtml(): string {
         <button class="tab" type="button" data-tab="share">Share</button>
         <button class="tab" type="button" data-tab="suggestions">Suggestions</button>
         <button class="tab" type="button" data-tab="tasks">Tasks</button>
+        <button class="tab" type="button" data-tab="repositories">Repositories</button>
         <button class="tab" type="button" data-tab="files">Files</button>
       </div>
       <div class="meta" id="meta">Loading...</div>
@@ -401,6 +406,7 @@ function renderDashboardHtml(): string {
       share: "Share",
       suggestions: "Suggestions",
       tasks: "Tasks",
+      repositories: "Repositories",
       files: "Files"
     };
 
@@ -451,6 +457,11 @@ function renderDashboardHtml(): string {
         content.querySelectorAll("[data-copy-task]").forEach((button) => {
           button.addEventListener("click", () => copyText(state.data.tasks[button.dataset.copyTask] || ""));
         });
+      } else if (state.tab === "repositories") {
+        content.innerHTML = '<div class="grid">' +
+          '<div class="block"><div class="block-head"><h3>Repository Context</h3><button class="copy-button" type="button" data-copy-repository="context">Copy</button></div>' + markdownBlock(state.data.repositoryContext, "No repository context. Run setup --select-repos or edit context/repositories.md.") + '</div>' +
+          '<div class="block"><div class="block-head"><h3>Repository Links</h3><button class="copy-button" type="button" data-copy-repository="links">Copy</button></div>' + markdownBlock(state.data.repositoryLinks, "No repository links. Run setup --select-repos or edit links/repositories.md.") + '</div>' +
+          '</div>';
       } else if (state.tab === "files") {
         content.innerHTML = filesBlock(state.data.files);
       }
@@ -476,6 +487,12 @@ function renderDashboardHtml(): string {
       if (fileGroup) {
         copyText((state.data.files[fileGroup] || []).join("\\n"));
       }
+      const repositoryGroup = target.dataset.copyRepository;
+      if (repositoryGroup === "context") {
+        copyText(state.data.repositoryContext || "");
+      } else if (repositoryGroup === "links") {
+        copyText(state.data.repositoryLinks || "");
+      }
     });
 
     function currentViewText() {
@@ -493,6 +510,10 @@ function renderDashboardHtml(): string {
         return Object.entries(state.data.files)
           .map(([name, items]) => "# " + name + "\\n" + items.join("\\n"))
           .join("\\n\\n");
+      }
+      if (state.tab === "repositories") {
+        return "# Repository Context\\n\\n" + (state.data.repositoryContext || "") +
+          "\\n\\n# Repository Links\\n\\n" + (state.data.repositoryLinks || "");
       }
       return "";
     }
