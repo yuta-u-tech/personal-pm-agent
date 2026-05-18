@@ -96,7 +96,7 @@ function printHelp(): void {
 
 Usage:
   pm-agent init [ledger-dir]
-  pm-agent setup [ledger-dir] [--ledger-name progress-ledger] [--private|--public] [--owner github-user] [--no-github]
+  pm-agent setup [ledger-dir] [--ledger-name progress-ledger] [--private|--public] [--owner github-user] [--select-repos] [--repo-scope all|owned|collaborating] [--no-github]
   pm-agent collect [ledger-dir]
   pm-agent dashboard [ledger-dir] [--port 4783] [--no-open]
   pm-agent report [ledger-dir] [--adapter mock|background-agent] [--open]
@@ -130,6 +130,8 @@ function parseArgs(args: string[]): {
     owner?: string;
     visibility?: "private" | "public";
     github?: boolean;
+    selectRepos?: boolean;
+    repoScope?: string;
     open?: boolean;
     apply?: boolean;
     port?: string;
@@ -151,6 +153,8 @@ function parseArgs(args: string[]): {
     owner?: string;
     visibility?: "private" | "public";
     github?: boolean;
+    selectRepos?: boolean;
+    repoScope?: string;
     open?: boolean;
     apply?: boolean;
     port?: string;
@@ -227,6 +231,15 @@ function parseArgs(args: string[]): {
     }
     if (arg === "--no-github") {
       options.github = false;
+      continue;
+    }
+    if (arg === "--select-repos") {
+      options.selectRepos = true;
+      continue;
+    }
+    if (arg === "--repo-scope") {
+      options.repoScope = args[index + 1];
+      index += 1;
       continue;
     }
     if (arg === "--open") {

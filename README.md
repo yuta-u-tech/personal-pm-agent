@@ -38,8 +38,13 @@ npm run pm-agent -- setup
 npm run pm-agent -- setup ../my-ledger --ledger-name my-ledger --private
 npm run pm-agent -- setup ../my-ledger --ledger-name my-ledger --public
 npm run pm-agent -- setup ../progress-ledger --owner github-user
+npm run pm-agent -- setup ../progress-ledger --select-repos --repo-scope all
+npm run pm-agent -- setup ../progress-ledger --select-repos --repo-scope owned
+npm run pm-agent -- setup ../progress-ledger --select-repos --repo-scope collaborating
 npm run pm-agent -- setup ../progress-ledger --no-github
 ```
+
+`--select-repos` lists repositories visible to the authenticated GitHub account before reading README files or adding repo context. Only selected repositories are registered in `links/repositories.md` and `context/repositories.md`. Use `--repo-scope owned`, `--repo-scope collaborating`, or `--repo-scope all`.
 
 GitHub setup requires the GitHub CLI:
 
