@@ -6,6 +6,7 @@ export type CollectedItemType =
   | "git"
   | "github_issue"
   | "repository"
+  | "repository_context"
   | "previous_report";
 
 export type CollectedItem = {
@@ -36,6 +37,7 @@ export type ContextPack = {
   people: Array<Record<string, unknown>>;
   recent_logs: Array<Record<string, unknown>>;
   repositories: Array<Record<string, unknown>>;
+  repository_context?: string;
   github_issues?: Array<Record<string, unknown>>;
   previous_report?: Record<string, unknown> | null;
   collected_items: number;

@@ -25,6 +25,7 @@ export type PmAgentConfig = {
     tasks?: { enabled?: boolean };
     dailyLogs?: { enabled?: boolean; days?: number };
     people?: { enabled?: boolean };
+    repositoryContext?: { enabled?: boolean };
     repositories?: { enabled?: boolean; includeGitStatus?: boolean };
     githubIssues?: { enabled?: boolean; limit?: number };
     previousReport?: { enabled?: boolean };

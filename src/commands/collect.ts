@@ -35,6 +35,7 @@ export async function collectCommand(targetDir: string, date = today()): Promise
     ? await collectRecentLogs(targetDir, rawItems, collectConfig.dailyLogs?.days ?? 7)
     : [];
   const people = isEnabled(collectConfig.people) ? await collectPeople(targetDir, rawItems) : [];
+  const repositoryContext = isEnabled(collectConfig.repositoryContext) ? await collectRepositoryContext(targetDir, rawItems) : "";
   const repositories = isEnabled(collectConfig.repositories)
     ? await collectRepositories(targetDir, rawItems, config)
     : [];
@@ -54,6 +55,7 @@ export async function collectCommand(targetDir: string, date = today()): Promise
     people,
     recent_logs: recentLogs,
     repositories,
+    repository_context: repositoryContext,
     github_issues: githubIssues,
     previous_report: previousReport,
     collected_items: rawItems.length
@@ -65,6 +67,20 @@ export async function collectCommand(targetDir: string, date = today()): Promise
     items: rawItems
   });
   await writeJson(path.join(outputDir, "context-pack.json"), pack);
+}
+
+async function collectRepositoryContext(targetDir: string, rawItems: CollectedItem[]): Promise<string> {
+  const file = path.join(targetDir, "context/repositories.md");
+  const body = (await readTextIfExists(file))?.trim() ?? "";
+  if (!body) return "";
+
+  rawItems.push({
+    source: file,
+    type: "repository_context",
+    title: "repository context",
+    body
+  });
+  return body;
 }
 
 async function collectGitHubIssues(

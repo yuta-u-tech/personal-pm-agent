@@ -33,6 +33,7 @@ export async function initCommand(targetDir: string): Promise<void> {
     writeTextIfMissing(path.join(targetDir, "tasks/done.md"), "# Done\n\n"),
     writeTextIfMissing(path.join(targetDir, "context/people.md"), "# People\n\n"),
     writeTextIfMissing(path.join(targetDir, "context/priorities.md"), "# Priorities\n\n"),
+    writeTextIfMissing(path.join(targetDir, "context/repositories.md"), "# Repository Context\n\n"),
     writeTextIfMissing(path.join(targetDir, "links/repositories.md"), "# Repositories\n\n"),
     writeTextIfMissing(path.join(targetDir, "ai/schemas/pm-report.schema.json"), stringifyPMReportSchema())
   ]);
@@ -60,6 +61,7 @@ function config(): string {
     "tasks": { "enabled": true },
     "dailyLogs": { "enabled": true, "days": 7 },
     "people": { "enabled": true },
+    "repositoryContext": { "enabled": true },
     "repositories": { "enabled": true, "includeGitStatus": true },
     "githubIssues": { "enabled": true, "limit": 50 },
     "previousReport": { "enabled": true }
