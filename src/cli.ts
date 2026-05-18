@@ -106,7 +106,7 @@ Usage:
   pm-agent task [ledger-dir] add --list active --title "Task title"
   pm-agent task [ledger-dir] move --from active --to done --title "Task title"
   pm-agent task [ledger-dir] list [--list active]
-  pm-agent task [ledger-dir] discover [--source local|github] [--repo repo-id]
+  pm-agent task [ledger-dir] discover [--source local|github] [--repo repo-id] [--scope mine|all]
   pm-agent task [ledger-dir] import --number 1 --list active
   pm-agent shell [ledger-dir]
 `);
@@ -124,6 +124,7 @@ function parseArgs(args: string[]): {
     to?: string;
     repo?: string;
     source?: string;
+    scope?: string;
     ledgerName?: string;
     owner?: string;
     visibility?: "private" | "public";
@@ -143,6 +144,7 @@ function parseArgs(args: string[]): {
     to?: string;
     repo?: string;
     source?: string;
+    scope?: string;
     ledgerName?: string;
     owner?: string;
     visibility?: "private" | "public";
@@ -194,6 +196,11 @@ function parseArgs(args: string[]): {
     }
     if (arg === "--source") {
       options.source = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--scope") {
+      options.scope = args[index + 1];
       index += 1;
       continue;
     }

@@ -18,6 +18,7 @@ export type TaskCommandOptions = {
   to?: string;
   repo?: string;
   source?: string;
+  scope?: string;
   id?: string;
   number?: string;
 };
@@ -82,7 +83,7 @@ export async function taskCommand(
   }
 
   if (action === "discover") {
-    return discoverTasks(targetDir, options.repo, options.source);
+    return discoverTasks(targetDir, options.repo, options.source, options.scope);
   }
 
   if (action === "import") {
@@ -150,12 +151,13 @@ async function listTasks(targetDir: string, list?: TaskList): Promise<string> {
   return sections.join("\n\n");
 }
 
-async function discoverTasks(targetDir: string, repoFilter?: string, source = "local"): Promise<string> {
+async function discoverTasks(targetDir: string, repoFilter?: string, source = "local", scope = "mine"): Promise<string> {
   const repositoriesFile = path.join(targetDir, "links/repositories.md");
   const markdown = existsSync(repositoriesFile) ? await readFile(repositoriesFile, "utf8") : "";
   const repositories = parseRepositoryLinks(markdown).filter((repo) => !repoFilter || repo.id === repoFilter);
   const candidates: TaskCandidate[] = [];
   const normalizedSource = assertDiscoverySource(source);
+  const normalizedScope = assertDiscoveryScope(scope);
 
   if (normalizedSource === "github") {
     const githubRepositories = await resolveGitHubDiscoveryRepositories(
@@ -164,7 +166,7 @@ async function discoverTasks(targetDir: string, repoFilter?: string, source = "l
     );
 
     for (const repo of githubRepositories) {
-      candidates.push(...(await discoverGitHubCandidates(repo)));
+      candidates.push(...(await discoverGitHubCandidates(repo, normalizedScope)));
     }
 
     await writeCandidates(targetDir, candidates);
@@ -199,12 +201,17 @@ async function discoverTasks(targetDir: string, repoFilter?: string, source = "l
     .join("\n");
 }
 
-async function discoverGitHubCandidates(repo: GitHubRepository): Promise<TaskCandidate[]> {
+async function discoverGitHubCandidates(repo: GitHubRepository, scope: "mine" | "all"): Promise<TaskCandidate[]> {
   try {
-    const [issues, pullRequests] = await Promise.all([
-      ghJson<GitHubIssue[]>(["issue", "list", "--repo", repo.fullName, "--state", "open", "--json", "number,title,url,labels,assignees"]),
-      ghJson<GitHubPullRequest[]>(["pr", "list", "--repo", repo.fullName, "--state", "open", "--json", "number,title,url,labels,author"])
-    ]);
+    const [issues, pullRequests] = scope === "mine"
+      ? await Promise.all([
+          ghJson<GitHubIssue[]>(["issue", "list", "--repo", repo.fullName, "--state", "open", "--assignee", "@me", "--json", "number,title,url,labels,assignees"]),
+          ghPrMine(repo.fullName)
+        ])
+      : await Promise.all([
+          ghJson<GitHubIssue[]>(["issue", "list", "--repo", repo.fullName, "--state", "open", "--json", "number,title,url,labels,assignees"]),
+          ghJson<GitHubPullRequest[]>(["pr", "list", "--repo", repo.fullName, "--state", "open", "--json", "number,title,url,labels,author"])
+        ]);
 
     return [
       ...issues.map((issue) => ({
@@ -228,6 +235,23 @@ async function discoverGitHubCandidates(repo: GitHubRepository): Promise<TaskCan
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`GitHub discovery failed for ${repo.fullName}. Check \`gh auth status\` and repository access. ${message}`);
   }
+}
+
+async function ghPrMine(fullName: string): Promise<GitHubPullRequest[]> {
+  const [authored, reviewRequested] = await Promise.all([
+    ghJson<GitHubPullRequest[]>(["pr", "list", "--repo", fullName, "--state", "open", "--author", "@me", "--json", "number,title,url,labels,author"]),
+    ghJson<GitHubPullRequest[]>(["pr", "list", "--repo", fullName, "--state", "open", "--search", "review-requested:@me", "--json", "number,title,url,labels,author"])
+  ]);
+  return uniquePullRequests([...authored, ...reviewRequested]);
+}
+
+function uniquePullRequests(pullRequests: GitHubPullRequest[]): GitHubPullRequest[] {
+  const seen = new Set<number>();
+  return pullRequests.filter((pullRequest) => {
+    if (seen.has(pullRequest.number)) return false;
+    seen.add(pullRequest.number);
+    return true;
+  });
 }
 
 async function resolveGitHubDiscoveryRepositories(
@@ -318,6 +342,11 @@ function formatGitHubPullRequestDetail(pullRequest: GitHubPullRequest): string {
 function assertDiscoverySource(source: string): "local" | "github" {
   if (source === "local" || source === "github") return source;
   throw new Error(`Unknown discovery source: ${source}. Expected local or github.`);
+}
+
+function assertDiscoveryScope(scope: string): "mine" | "all" {
+  if (scope === "mine" || scope === "all") return scope;
+  throw new Error(`Unknown discovery scope: ${scope}. Expected mine or all.`);
 }
 
 async function importTaskCandidate(targetDir: string, list: TaskList, options: TaskCommandOptions): Promise<string> {

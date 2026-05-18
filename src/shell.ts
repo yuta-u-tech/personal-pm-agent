@@ -84,10 +84,10 @@ async function runShellCommand(targetDir: string, line: string): Promise<string>
     });
   }
   if (command === "/discover") {
-    const positional = args.filter((arg, index) => !arg.startsWith("--") && args[index - 1] !== "--repo" && args[index - 1] !== "--source");
+    const positional = args.filter((arg, index) => !arg.startsWith("--") && args[index - 1] !== "--repo" && args[index - 1] !== "--source" && args[index - 1] !== "--scope");
     const source = positional[0] === "github" || positional[0] === "local" ? positional[0] : parseOption(args, "--source") ?? "local";
     const repo = positional[0] === "github" || positional[0] === "local" ? positional[1] : parseOption(args, "--repo") ?? positional[0];
-    return taskCommand(targetDir, "discover", { repo, source });
+    return taskCommand(targetDir, "discover", { repo, source, scope: parseOption(args, "--scope") ?? "mine" });
   }
   if (command === "/import") {
     return taskCommand(targetDir, "import", {
@@ -129,7 +129,7 @@ function helpText(): string {
 /suggest [--no-open]
 /tasks [active|waiting|delegated|backlog|done]
 /discover [repo-id]     Discover local task candidates from linked repos
-/discover github [repo-id]
+/discover github [repo-id] [--scope mine|all]
 /import <number|id> [--list active]
 /add <title> [--list active] [--repo repo-id]
 /exit`;
