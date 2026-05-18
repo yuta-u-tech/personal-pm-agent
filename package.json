@@ -8,6 +8,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "shell": "node dist/cli.js",
+    "dashboard": "node dist/cli.js dashboard ../progress-ledger",
     "pm-agent": "tsx src/cli.ts",
     "test": "npm run build && node --test dist/**/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"

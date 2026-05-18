@@ -20,6 +20,15 @@ npm run pm-agent -- morning ../progress-ledger
 npm run pm-agent -- dashboard ../progress-ledger
 ```
 
+Daily use after setup:
+
+```sh
+npm start
+npm run dashboard
+```
+
+`npm start` opens the interactive shell for `../progress-ledger`. This is the short form of `node dist/cli.js shell ../progress-ledger`.
+
 `setup` is the recommended first run after cloning this repository. It checks `gh auth status`, creates a private `progress-ledger` GitHub repository when missing, clones or reuses `../progress-ledger`, initializes the ledger structure, commits it, and pushes it.
 
 Setup options:
@@ -62,7 +71,7 @@ npm run pm-agent -- task ../progress-ledger import --number 1 --list active
 Interactive shell:
 
 ```sh
-npm run pm-agent -- shell ../progress-ledger
+npm start
 ```
 
 Then use short commands:
