@@ -3,6 +3,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { today } from "../core/date.js";
+import { expandHome } from "../core/git.js";
 import { parseRepositoryLinks } from "../core/markdown.js";
 import { openFile } from "../core/open.js";
 import { statusCommand } from "./status.js";
@@ -35,9 +36,15 @@ type DashboardRepository = {
   id: string;
   name?: string;
   path?: string;
+  localPath?: string;
   github?: string;
   project?: string;
   context?: string;
+  understanding?: {
+    projectBrief: string;
+    areaMap: string;
+    safetyReport: string;
+  };
 };
 
 const dashboardServers = new Map<string, http.Server>();
@@ -120,7 +127,7 @@ async function readDashboardData(targetDir: string, date: string): Promise<Dashb
     suggestions: await readText(path.join(targetDir, "suggestions", `${date}.md`)),
     repositoryContext,
     repositoryLinks,
-    repositories: buildDashboardRepositories(repositoryLinks, repositoryContext),
+    repositories: await buildDashboardRepositories(targetDir, repositoryLinks, repositoryContext),
     tasks: {
       active: await readText(path.join(targetDir, "tasks/active.md")),
       waiting: await readText(path.join(targetDir, "tasks/waiting.md")),
@@ -136,16 +143,39 @@ async function readDashboardData(targetDir: string, date: string): Promise<Dashb
   };
 }
 
-function buildDashboardRepositories(repositoryLinks: string, repositoryContext: string): DashboardRepository[] {
+async function buildDashboardRepositories(targetDir: string, repositoryLinks: string, repositoryContext: string): Promise<DashboardRepository[]> {
   const contextById = extractRepositoryContextSections(repositoryContext);
-  return parseRepositoryLinks(repositoryLinks).map((repo) => ({
-    id: repo.id,
-    name: repo.name,
-    path: repo.path,
-    github: repo.github,
-    project: repo.project,
-    context: contextById.get(repo.id) ?? contextById.get(repo.name ?? "") ?? ""
-  }));
+  return Promise.all(
+    parseRepositoryLinks(repositoryLinks).map(async (repo) => {
+      const localPath = resolveRepositoryLocalPath(targetDir, repo);
+      return {
+        id: repo.id,
+        name: repo.name,
+        path: repo.path,
+        localPath,
+        github: repo.github,
+        project: repo.project,
+        context: contextById.get(repo.id) ?? contextById.get(repo.name ?? "") ?? "",
+        understanding: localPath ? await readRepositoryUnderstanding(localPath) : undefined
+      };
+    })
+  );
+}
+
+function resolveRepositoryLocalPath(targetDir: string, repo: Record<string, string>): string | undefined {
+  const candidates = [
+    repo.path ? expandHome(repo.path) : "",
+    path.join(path.dirname(targetDir), repo.id)
+  ].filter(Boolean);
+  return candidates.find((candidate) => existsSync(path.join(candidate, ".git"))) ?? candidates.find((candidate) => existsSync(path.join(candidate, ".pm-agent")));
+}
+
+async function readRepositoryUnderstanding(repoDir: string): Promise<DashboardRepository["understanding"]> {
+  return {
+    projectBrief: await readText(path.join(repoDir, ".pm-agent/project/project-brief.md")),
+    areaMap: await readText(path.join(repoDir, ".pm-agent/project/area-map.md")),
+    safetyReport: await readText(path.join(repoDir, ".pm-agent/safety/safety-report.md"))
+  };
 }
 
 function extractRepositoryContextSections(markdown: string): Map<string, string> {
@@ -422,6 +452,12 @@ function renderDashboardHtml(): string {
       min-width: 0;
     }
 
+    .repo-detail {
+      display: grid;
+      gap: 16px;
+      min-width: 0;
+    }
+
     .repo-link {
       display: block;
       border: 1px solid var(--line);
@@ -615,9 +651,12 @@ function renderDashboardHtml(): string {
       }).join("");
       return '<div class="repo-layout">' +
         '<div class="block"><div class="block-head"><h3>Repositories</h3><button class="copy-button" type="button" data-copy-repository="links">Copy</button></div><div class="repo-list">' + list + '</div></div>' +
+        '<div class="repo-detail">' +
         '<div class="block"><div class="block-head"><h3>' + escapeHtml(selected.name || selected.id) + '</h3><button class="copy-button" type="button" data-copy-repository="selected">Copy</button></div>' +
         repoMetaBlock(selected) +
         markdownBlock(selected.context || repositoryRecordText(selected), "No repository context. Run setup --select-repos or edit context/repositories.md.") +
+        '</div>' +
+        understandingBlock(selected) +
         '</div>' +
         '</div>';
     }
@@ -627,7 +666,21 @@ function renderDashboardHtml(): string {
         '<div><strong>ID:</strong> ' + escapeHtml(repo.id || "") + '</div>' +
         (repo.github ? '<div><strong>GitHub:</strong> ' + escapeHtml(repo.github) + '</div>' : '') +
         (repo.path ? '<div><strong>Local:</strong> ' + escapeHtml(repo.path) + '</div>' : '') +
+        (repo.localPath && repo.localPath !== repo.path ? '<div><strong>Resolved:</strong> ' + escapeHtml(repo.localPath) + '</div>' : '') +
         (repo.project ? '<div><strong>Project:</strong> ' + escapeHtml(repo.project) + '</div>' : '') +
+        '</div>';
+    }
+
+    function understandingBlock(repo) {
+      const understanding = repo.understanding || {};
+      const hasUnderstanding = Boolean((understanding.projectBrief || "").trim() || (understanding.areaMap || "").trim() || (understanding.safetyReport || "").trim());
+      if (!hasUnderstanding) {
+        return '<div class="empty">No understand output yet. Run pm-agent understand for this repository, then refresh the dashboard.</div>';
+      }
+      return '<div class="grid">' +
+        '<div class="block"><div class="block-head"><h3>Project Brief</h3><button class="copy-button" type="button" data-copy-understand="projectBrief">Copy</button></div>' + markdownBlock(understanding.projectBrief, "No project brief.") + '</div>' +
+        '<div class="block"><div class="block-head"><h3>Area Map</h3><button class="copy-button" type="button" data-copy-understand="areaMap">Copy</button></div>' + markdownBlock(understanding.areaMap, "No area map.") + '</div>' +
+        '<div class="block"><div class="block-head"><h3>Safety Report</h3><button class="copy-button" type="button" data-copy-understand="safetyReport">Copy</button></div>' + markdownBlock(understanding.safetyReport, "No safety report.") + '</div>' +
         '</div>';
     }
 
@@ -656,6 +709,11 @@ function renderDashboardHtml(): string {
         copyText(state.data.repositoryLinks || "");
       } else if (repositoryGroup === "selected") {
         copyText(selectedRepositoryText());
+      }
+      const understandGroup = target.dataset.copyUnderstand;
+      if (understandGroup) {
+        const selected = selectedRepository();
+        copyText(selected?.understanding?.[understandGroup] || "");
       }
     });
 
@@ -691,10 +749,19 @@ function renderDashboardHtml(): string {
     }
 
     function selectedRepositoryText() {
-      const repos = state.data?.repositories || [];
-      const selected = repos.find((repo) => repo.id === state.repo) || repos[0];
+      const selected = selectedRepository();
       if (!selected) return "# Repository Links\\n\\n" + (state.data?.repositoryLinks || "");
-      return repositoryRecordText(selected) + "\\n\\n" + (selected.context || "");
+      const understanding = selected.understanding || {};
+      return repositoryRecordText(selected) +
+        "\\n\\n" + (selected.context || "") +
+        "\\n\\n# Project Brief\\n\\n" + (understanding.projectBrief || "") +
+        "\\n\\n# Area Map\\n\\n" + (understanding.areaMap || "") +
+        "\\n\\n# Safety Report\\n\\n" + (understanding.safetyReport || "");
+    }
+
+    function selectedRepository() {
+      const repos = state.data?.repositories || [];
+      return repos.find((repo) => repo.id === state.repo) || repos[0];
     }
 
     function updateUrl() {
