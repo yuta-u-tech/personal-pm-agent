@@ -1,4 +1,5 @@
 import path from "node:path";
+import crypto from "node:crypto";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { execFile } from "node:child_process";
@@ -27,6 +28,7 @@ type TestInfo = {
 
 type FileCard = {
   path: string;
+  hash: string;
   extension: string;
   language: string;
   size: number;
@@ -37,6 +39,7 @@ type FileCard = {
   symbols: SymbolInfo[];
   headings?: string[];
   tests?: TestInfo[];
+  packageInfo?: PackageInfo;
   signals: string[];
   guessedRole?: string;
   sensitive?: boolean;
@@ -50,6 +53,7 @@ type SafetyFinding = {
   recommendedAction: SensitiveAction;
   action: SensitiveAction;
   redactions: Record<string, number>;
+  blocked?: boolean;
 };
 
 type DependencyEdge = {
@@ -63,6 +67,41 @@ type DeepReadCandidate = {
   path: string;
   score: number;
   reasons: string[];
+  estimatedTokens?: number;
+};
+
+type PackageInfo = {
+  scripts?: Record<string, string>;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+};
+
+type UnderstandCache = {
+  fileHashes: Record<string, string>;
+  summaryHashes: Record<string, string>;
+};
+
+type TokenBudget = {
+  fileCards: number;
+  deepReadFiles: number;
+  issues: number;
+  summaries: number;
+  total: number;
+  limit: number;
+  trimmedDeepReadFiles: number;
+};
+
+type UnderstandStats = {
+  gitTrackedFiles: number;
+  ignoredByPmAgentignore: number;
+  textFiles: number;
+  sensitiveCandidates: number;
+  fileCardsReused: number;
+  fileCardsGenerated: number;
+  dependencyEdges: number;
+  selectedDeepReadFiles: number;
+  fileSummariesReused: number;
+  fileSummariesGenerated: number;
 };
 
 const DEFAULT_IGNORE = `# secrets
@@ -111,6 +150,7 @@ vendor/
 
 const DANGEROUS_PATTERNS = [
   { pattern: ".env", reason: "environment file", action: "skip" as SensitiveAction },
+  { pattern: ".env.example", reason: "env example", action: "redact" as SensitiveAction },
   { pattern: ".env.*", reason: "environment file", action: "skip" as SensitiveAction },
   { pattern: "*.pem", reason: "private key or certificate", action: "skip" as SensitiveAction },
   { pattern: "*.key", reason: "private key", action: "skip" as SensitiveAction },
@@ -170,27 +210,56 @@ const COMMON_SIGNALS = new Set([
   "common"
 ]);
 
+const LIMITS = {
+  maxTokensPerCall: 12_000,
+  maxTokensForUnderstand: 40_000,
+  maxDeepReadFiles: 30,
+  maxFileBytes: 80_000,
+  headLines: 30
+};
+
 export async function understandCommand(targetDir: string, options: UnderstandOptions = {}): Promise<string> {
   const repoDir = path.resolve(targetDir);
-  const catalogPath = path.join(repoDir, ".pm-agent/catalog/file-cards.json");
-  if (!options.refresh && existsSync(catalogPath)) {
-    return `Project understanding already exists: ${path.join(repoDir, ".pm-agent")}\nRun with --refresh to rebuild it.`;
-  }
 
   await writeTextIfMissing(path.join(repoDir, ".pm-agentignore"), DEFAULT_IGNORE);
   await ensureKnowledgeDirs(repoDir);
 
+  const cache = options.refresh ? emptyCache() : await readCache(repoDir);
+  const previousCards = options.refresh ? new Map<string, FileCard>() : await readPreviousFileCards(repoDir);
   const files = await listGitFiles(repoDir);
   const ignorePatterns = await readIgnorePatterns(repoDir);
-  const candidateFiles = files.filter((file) => !matchesAny(file, ignorePatterns));
+  const candidateFiles = files.filter((file) => shouldIncludeDespiteIgnore(file) || !matchesAny(file, ignorePatterns));
   const sensitiveDecisions = await resolveSensitiveActions(candidateFiles);
 
   const cards: FileCard[] = [];
   const safetyFindings: SafetyFinding[] = [];
+  const stats: UnderstandStats = {
+    gitTrackedFiles: files.length,
+    ignoredByPmAgentignore: files.length - candidateFiles.length,
+    textFiles: 0,
+    sensitiveCandidates: sensitiveDecisions.size,
+    fileCardsReused: 0,
+    fileCardsGenerated: 0,
+    dependencyEdges: 0,
+    selectedDeepReadFiles: 0,
+    fileSummariesReused: 0,
+    fileSummariesGenerated: 0
+  };
+  const nextCache: UnderstandCache = emptyCache();
 
   for (const file of candidateFiles) {
     const absolutePath = path.join(repoDir, file);
     const content = await readFile(absolutePath, "utf8").catch(() => "");
+    if (!content && isLikelyBinary(file)) continue;
+    stats.textFiles += 1;
+    const hash = hashText(content);
+    nextCache.fileHashes[file] = hash;
+    const previousCard = previousCards.get(file);
+    if (previousCard?.hash === hash) {
+      cards.push(previousCard);
+      stats.fileCardsReused += 1;
+      continue;
+    }
     const sensitive = sensitiveDecisions.get(file);
     const redacted = redactSecrets(content);
     if (sensitive || Object.keys(redacted.counts).length > 0) {
@@ -204,14 +273,18 @@ export async function understandCommand(targetDir: string, options: UnderstandOp
     }
     const action = sensitive?.action;
     if (action === "skip") continue;
-    cards.push(createFileCard(file, action === "redact" ? redacted.text : content, action));
+    cards.push(createFileCard(file, action === "redact" ? redacted.text : content, hash, action));
+    stats.fileCardsGenerated += 1;
   }
 
   const aliases = await readPathAliases(repoDir);
   const edges = buildDependencyGraph(cards, aliases);
   const reverseIndex = buildReverseIndex(edges);
-  const deepReadCandidates = selectDeepReadCandidates(cards, edges).slice(0, 30);
-  const summaries = await writeFileSummaries(repoDir, cards, deepReadCandidates);
+  stats.dependencyEdges = edges.length;
+  const selected = selectDeepReadCandidates(cards, edges);
+  const { candidates: deepReadCandidates, budget } = applyTokenBudget(cards, selected);
+  stats.selectedDeepReadFiles = deepReadCandidates.length;
+  const summaries = await writeFileSummaries(repoDir, cards, deepReadCandidates, cache, nextCache, stats);
   const project = buildProjectUnderstanding(cards, edges, deepReadCandidates);
 
   const payload = JSON.stringify({ cards, edges, reverseIndex, deepReadCandidates, project, summaries });
@@ -222,7 +295,8 @@ export async function understandCommand(targetDir: string, options: UnderstandOp
       reason: "secret-like value detected before model payload",
       recommendedAction: "redact",
       action: "redact",
-      redactions: payloadAudit.counts
+      redactions: payloadAudit.counts,
+      blocked: false
     });
   }
 
@@ -237,14 +311,10 @@ export async function understandCommand(targetDir: string, options: UnderstandOp
   await writeJson(path.join(repoDir, ".pm-agent/project/issue-map.json"), project.issueMap);
   await writeJson(path.join(repoDir, ".pm-agent/safety/safety-report.json"), safetyFindings);
   await writeFile(path.join(repoDir, ".pm-agent/safety/safety-report.md"), renderSafetyReport(safetyFindings), "utf8");
+  await writeJson(path.join(repoDir, ".pm-agent/cache/understand-cache.json"), nextCache);
+  await writeJson(path.join(repoDir, ".pm-agent/cache/token-budget.json"), budget);
 
-  return `Project understanding generated: ${path.join(repoDir, ".pm-agent")}
-- Files scanned: ${files.length}
-- Files after ignore filters: ${candidateFiles.length}
-- File cards: ${cards.length}
-- Dependency edges: ${edges.length}
-- Deep-read summaries: ${deepReadCandidates.length}
-- Safety findings: ${safetyFindings.length}`;
+  return renderUnderstandLog(repoDir, stats, budget, safetyFindings.length);
 }
 
 async function ensureKnowledgeDirs(repoDir: string): Promise<void> {
@@ -253,7 +323,8 @@ async function ensureKnowledgeDirs(repoDir: string): Promise<void> {
     ensureDir(path.join(repoDir, ".pm-agent/graph")),
     ensureDir(path.join(repoDir, ".pm-agent/file-summaries")),
     ensureDir(path.join(repoDir, ".pm-agent/project")),
-    ensureDir(path.join(repoDir, ".pm-agent/safety"))
+    ensureDir(path.join(repoDir, ".pm-agent/safety")),
+    ensureDir(path.join(repoDir, ".pm-agent/cache"))
   ]);
 }
 
@@ -272,6 +343,31 @@ async function readIgnorePatterns(repoDir: string): Promise<string[]> {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"));
+}
+
+async function readPreviousFileCards(repoDir: string): Promise<Map<string, FileCard>> {
+  const file = path.join(repoDir, ".pm-agent/catalog/file-cards.json");
+  if (!existsSync(file)) return new Map();
+  try {
+    const cards = JSON.parse(await readFile(file, "utf8")) as FileCard[];
+    return new Map(cards.map((card) => [card.path, card]));
+  } catch {
+    return new Map();
+  }
+}
+
+async function readCache(repoDir: string): Promise<UnderstandCache> {
+  const file = path.join(repoDir, ".pm-agent/cache/understand-cache.json");
+  if (!existsSync(file)) return emptyCache();
+  try {
+    return JSON.parse(await readFile(file, "utf8")) as UnderstandCache;
+  } catch {
+    return emptyCache();
+  }
+}
+
+function emptyCache(): UnderstandCache {
+  return { fileHashes: {}, summaryHashes: {} };
 }
 
 async function resolveSensitiveActions(files: string[]): Promise<Map<string, { reason: string; recommendedAction: SensitiveAction; action: SensitiveAction }>> {
@@ -312,7 +408,7 @@ async function resolveSensitiveActions(files: string[]): Promise<Map<string, { r
   );
 }
 
-function createFileCard(filePath: string, content: string, sensitiveAction?: SensitiveAction): FileCard {
+function createFileCard(filePath: string, content: string, hash: string, sensitiveAction?: SensitiveAction): FileCard {
   const extension = path.extname(filePath);
   const language = languageFor(filePath);
   const lines = content.split(/\r?\n/);
@@ -321,27 +417,44 @@ function createFileCard(filePath: string, content: string, sensitiveAction?: Sen
   const symbols = extractSymbols(content);
   const headings = language === "markdown" ? extractMarkdownHeadings(content) : undefined;
   const tests = extractTests(content);
-  const signals = collectSignals(filePath, [...imports, ...exports, ...symbols.map((symbol) => symbol.name), ...(headings ?? [])]);
+  const packageInfo = filePath === "package.json" ? extractPackageInfo(content) : undefined;
+  const packageSignals = packageInfo ? [...Object.keys(packageInfo.scripts ?? {}), ...Object.keys(packageInfo.dependencies ?? {}), ...Object.keys(packageInfo.devDependencies ?? {})] : [];
+  const signals = collectSignals(filePath, [...imports, ...exports, ...symbols.map((symbol) => symbol.name), ...(headings ?? []), ...packageSignals]);
   const contentIncluded = sensitiveAction !== "structure-only";
 
   return {
     path: filePath,
+    hash,
     extension,
     language,
     size: Buffer.byteLength(content, "utf8"),
     lineCount: lines.length,
-    headExcerpt: contentIncluded ? lines.slice(0, 30).join("\n") : undefined,
+    headExcerpt: contentIncluded ? lines.slice(0, LIMITS.headLines).join("\n") : undefined,
     imports,
     exports,
     symbols,
     headings,
     tests: tests.length ? tests : undefined,
+    packageInfo,
     signals,
     guessedRole: guessRole(filePath),
     sensitive: Boolean(sensitiveAction),
     sensitiveAction,
     contentIncluded
   };
+}
+
+function extractPackageInfo(content: string): PackageInfo | undefined {
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      scripts: typeof parsed.scripts === "object" ? parsed.scripts : undefined,
+      dependencies: typeof parsed.dependencies === "object" ? parsed.dependencies : undefined,
+      devDependencies: typeof parsed.devDependencies === "object" ? parsed.devDependencies : undefined
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function extractImports(content: string): string[] {
@@ -502,22 +615,75 @@ function selectDeepReadCandidates(cards: FileCard[], edges: DependencyEdge[]): D
         score -= 50;
         reasons.push("sensitive-penalty");
       }
-      return { path: card.path, score, reasons };
+      return { path: card.path, score, reasons, estimatedTokens: estimateTokens(card.headExcerpt ?? "") };
     })
     .filter((candidate) => candidate.score > 0)
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
 }
 
-async function writeFileSummaries(repoDir: string, cards: FileCard[], candidates: DeepReadCandidate[]): Promise<Array<{ path: string; summaryPath: string }>> {
+function applyTokenBudget(cards: FileCard[], selected: DeepReadCandidate[]): { candidates: DeepReadCandidate[]; budget: TokenBudget } {
+  const cardTokens = estimateTokens(JSON.stringify(cards.map((card) => ({ ...card, headExcerpt: undefined }))));
+  const summariesTokens = Math.round(selected.length * 180);
+  const issuesTokens = 0;
+  let candidates = selected.slice(0, LIMITS.maxDeepReadFiles);
+  let deepReadTokens = estimateDeepReadTokens(cards, candidates);
+  let total = cardTokens + deepReadTokens + summariesTokens + issuesTokens;
+  let trimmed = 0;
+
+  while (total > LIMITS.maxTokensForUnderstand && candidates.length > 0) {
+    candidates = candidates.slice(0, -1);
+    trimmed += 1;
+    deepReadTokens = estimateDeepReadTokens(cards, candidates);
+    total = cardTokens + deepReadTokens + Math.round(candidates.length * 180) + issuesTokens;
+  }
+
+  return {
+    candidates,
+    budget: {
+      fileCards: cardTokens,
+      deepReadFiles: deepReadTokens,
+      issues: issuesTokens,
+      summaries: Math.round(candidates.length * 180),
+      total,
+      limit: LIMITS.maxTokensForUnderstand,
+      trimmedDeepReadFiles: trimmed
+    }
+  };
+}
+
+function estimateDeepReadTokens(cards: FileCard[], candidates: DeepReadCandidate[]): number {
+  const byPath = new Map(cards.map((card) => [card.path, card]));
+  return candidates.reduce((sum, candidate) => {
+    const card = byPath.get(candidate.path);
+    if (!card) return sum;
+    return sum + Math.min(Math.ceil(card.size / 4), LIMITS.maxTokensPerCall);
+  }, 0);
+}
+
+async function writeFileSummaries(
+  repoDir: string,
+  cards: FileCard[],
+  candidates: DeepReadCandidate[],
+  cache: UnderstandCache,
+  nextCache: UnderstandCache,
+  stats: UnderstandStats
+): Promise<Array<{ path: string; summaryPath: string }>> {
   const byPath = new Map(cards.map((card) => [card.path, card]));
   const summaries: Array<{ path: string; summaryPath: string }> = [];
   for (const candidate of candidates) {
     const card = byPath.get(candidate.path);
     if (!card) continue;
-    const summary = renderFileSummary(card, candidate);
     const summaryPath = path.join(repoDir, ".pm-agent/file-summaries", `${safeFileName(candidate.path)}.md`);
+    nextCache.summaryHashes[candidate.path] = card.hash;
+    if (cache.summaryHashes[candidate.path] === card.hash && existsSync(summaryPath)) {
+      stats.fileSummariesReused += 1;
+      summaries.push({ path: candidate.path, summaryPath });
+      continue;
+    }
+    const summary = renderFileSummary(card, candidate);
     await mkdir(path.dirname(summaryPath), { recursive: true });
     await writeFile(summaryPath, summary, "utf8");
+    stats.fileSummariesGenerated += 1;
     summaries.push({ path: candidate.path, summaryPath });
   }
   return summaries;
@@ -683,14 +849,43 @@ ${area.risks.map((risk) => `- ${risk}`).join("\n") || "- none"}`
 }
 
 function renderSafetyReport(findings: SafetyFinding[]): string {
+  const skipped = findings.filter((finding) => finding.action === "skip");
+  const redacted = findings.filter((finding) => finding.action === "redact");
+  const structureOnly = findings.filter((finding) => finding.action === "structure-only");
+  const blocked = findings.filter((finding) => finding.blocked);
+  const renderGroup = (items: SafetyFinding[]) =>
+    items.length
+      ? items
+          .map(
+            (finding) => `- ${finding.path}
+  - reason: ${finding.reason}
+  - recommended: ${finding.recommendedAction}
+  - action: ${finding.action}
+  - detected patterns: ${Object.keys(finding.redactions).join(", ") || "none"}`
+          )
+          .join("\n")
+      : "- none";
   return `# Safety Report
 
-${findings.length ? findings.map((finding) => `## ${finding.path}
+## Skipped
+${renderGroup(skipped)}
 
-- reason: ${finding.reason}
-- recommended: ${finding.recommendedAction}
-- action: ${finding.action}
-- redactions: ${JSON.stringify(finding.redactions)}`).join("\n\n") : "No sensitive files or secret-like values detected."}
+## Redacted
+${renderGroup(redacted)}
+
+## Structure Only
+${renderGroup(structureOnly)}
+
+## Blocked Payloads
+${renderGroup(blocked)}
+
+## Policy
+
+User approval allows scanning.
+User approval does not bypass redaction.
+
+ユーザーの許可はスキャン対象に含めるための許可であり、
+secretをLLMへそのまま送る許可ではありません。
 `;
 }
 
@@ -718,13 +913,7 @@ function inferTechStack(cards: FileCard[]): string[] {
 }
 
 function inferUsefulCommands(packageCard?: FileCard): string[] {
-  if (!packageCard?.headExcerpt) return [];
-  try {
-    const parsed = JSON.parse(packageCard.headExcerpt);
-    return Object.keys(parsed.scripts ?? {}).map((name) => `npm run ${name}`);
-  } catch {
-    return [];
-  }
+  return Object.keys(packageCard?.packageInfo?.scripts ?? {}).map((name) => `npm run ${name}`);
 }
 
 function inferArea(filePath: string): string {
@@ -789,8 +978,24 @@ function redactSecrets(text: string): { text: string; counts: Record<string, num
   return { text: redacted, counts };
 }
 
+function hashText(text: string): string {
+  return crypto.createHash("sha256").update(text).digest("hex");
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function isLikelyBinary(filePath: string): boolean {
+  return /\.(png|jpe?g|gif|webp|ico|pdf|woff2?|ttf|otf|mp4|mov|mp3|wav)$/i.test(filePath);
+}
+
 function matchesAny(filePath: string, patterns: string[]): boolean {
   return patterns.some((pattern) => matchesPattern(filePath, pattern));
+}
+
+function shouldIncludeDespiteIgnore(filePath: string): boolean {
+  return path.posix.basename(filePath) === ".env.example";
 }
 
 function matchesPattern(filePath: string, pattern: string): boolean {
@@ -823,4 +1028,47 @@ function uniqueSymbols(symbols: SymbolInfo[]): SymbolInfo[] {
 
 function safeFileName(filePath: string): string {
   return filePath.replace(/[^A-Za-z0-9_.-]+/g, "__");
+}
+
+function renderUnderstandLog(repoDir: string, stats: UnderstandStats, budget: TokenBudget, safetyFindings: number): string {
+  const budgetAdvice = budget.trimmedDeepReadFiles > 0
+    ? `\nToken budget exceeded initial selection. Trimmed deep-read files: ${budget.trimmedDeepReadFiles}. Use --deep when implemented for broader reading.`
+    : "";
+  return `Analyzing repository...
+
+✓ git tracked files: ${stats.gitTrackedFiles}
+✓ ignored by .pm-agentignore: ${stats.ignoredByPmAgentignore}
+✓ text files: ${stats.textFiles}
+✓ sensitive candidates: ${stats.sensitiveCandidates}
+✓ safety policy applied
+✓ file cards generated: ${stats.fileCardsGenerated}
+✓ file cards reused: ${stats.fileCardsReused}
+✓ dependency edges: ${stats.dependencyEdges}
+✓ selected deep-read files: ${stats.selectedDeepReadFiles}
+✓ file summaries generated: ${stats.fileSummariesGenerated}
+✓ file summaries reused: ${stats.fileSummariesReused}
+✓ project brief generated
+✓ area map generated
+✓ capability map generated
+✓ issue map generated
+✓ safety report generated
+
+Token Budget:
+- File cards: ${budget.fileCards.toLocaleString()}
+- Deep read files: ${budget.deepReadFiles.toLocaleString()}
+- Issues: ${budget.issues.toLocaleString()}
+- Summaries: ${budget.summaries.toLocaleString()}
+Total: ${budget.total.toLocaleString()} / ${budget.limit.toLocaleString()}${budgetAdvice}
+
+Outputs:
+${path.join(repoDir, ".pm-agent/catalog/file-cards.json")}
+${path.join(repoDir, ".pm-agent/graph/dependency-graph.json")}
+${path.join(repoDir, ".pm-agent/graph/reverse-dependency-index.json")}
+${path.join(repoDir, ".pm-agent/project/project-brief.md")}
+${path.join(repoDir, ".pm-agent/project/area-map.md")}
+${path.join(repoDir, ".pm-agent/project/capability-map.json")}
+${path.join(repoDir, ".pm-agent/project/issue-map.json")}
+${path.join(repoDir, ".pm-agent/safety/safety-report.md")}
+
+Safety findings: ${safetyFindings}`;
 }

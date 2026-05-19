@@ -150,6 +150,32 @@ npm run pm-agent -- understand ../study-forge --refresh
 - `.pm-agent/project/issue-map.json`
 - `.pm-agent/safety/safety-report.md`
 
+What `understand` reads:
+
+- files returned by `git ls-files`
+- files not excluded by `.pm-agentignore`
+- head excerpts, imports, exports, symbols, markdown headings, and package metadata
+- selected deep-read files after safety filtering and token budget trimming
+
+`.pm-agentignore` is separate from `.gitignore`. It is created automatically when missing and excludes common secret, dependency, build, generated, and large-file paths such as `.env`, `.env.*`, `*.pem`, `*.key`, `credentials.json`, `service-account*.json`, `secrets/`, `node_modules/`, `dist/`, `build/`, `coverage/`, lock files, maps, database dumps, and archives.
+
+Safety and Secret Redaction:
+
+- danger paths are handled as `skip`, `structure-only`, or `redact`
+- `.env` and private key files are skipped by default
+- `.env.example` style files are still secret-scanned and redacted when included
+- config files such as `src/config/env.ts` are treated as structure-only by default when matched
+- LLM payloads are audited immediately before use; secret-like values are redacted or the payload is blocked
+- Safety reports are written to `.pm-agent/safety/safety-report.md` and `.pm-agent/safety/safety-report.json`
+
+Redacted patterns include OpenAI API keys, GitHub tokens, Slack tokens, AWS access keys, private keys, database URLs, `*_SECRET`, `*_TOKEN`, and `*_PASSWORD` values.
+
+User approval allows scanning. User approval does not bypass redaction.
+
+ユーザーの許可はスキャン対象に含めるための許可であり、secretをLLMへそのまま送る許可ではありません。
+
+Redaction is a safety layer, not a formal guarantee. Review the Safety Report before using generated summaries for planning or model input.
+
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:
 
