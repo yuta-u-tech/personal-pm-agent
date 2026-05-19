@@ -187,6 +187,22 @@ npm run pm-agent -- understand-active ../progress-ledger --no-github
 
 Active repositories are detected from `tasks/active.md` entries with `<!-- repo:<repo-id> -->` and, unless `--no-github` is passed, registered repositories that have open GitHub Issues assigned to you.
 
+`understand-active` does not clone repositories. For each active repository it resolves the local repository in this order:
+
+- `path:` in `links/repositories.md`
+- a sibling directory of the ledger with the same repo id
+- directories under `PM_AGENT_REPO_ROOTS`, the ledger parent, `~/work`, and the current working directory
+
+If no local clone is found but `github: owner/name` is registered, it generates a lightweight GitHub remote context instead:
+
+- `.pm-agent/remote-repositories/<repo-id>/project/project-brief.md`
+- `.pm-agent/remote-repositories/<repo-id>/project/area-map.md`
+- `.pm-agent/remote-repositories/<repo-id>/project/issue-map.md`
+- `.pm-agent/remote-repositories/<repo-id>/project/repository-context.json`
+- `.pm-agent/remote-repositories/<repo-id>/safety/safety-report.md`
+
+Remote context uses GitHub repository metadata, README, and open Issues assigned to you. It does not read local files, so file cards, dependency graphs, and deep implementation summaries are only available when a local clone is found.
+
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:
 

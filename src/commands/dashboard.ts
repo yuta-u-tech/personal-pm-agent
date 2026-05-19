@@ -148,6 +148,7 @@ async function buildDashboardRepositories(targetDir: string, repositoryLinks: st
   return Promise.all(
     parseRepositoryLinks(repositoryLinks).map(async (repo) => {
       const localPath = resolveRepositoryLocalPath(targetDir, repo);
+      const remotePath = path.join(targetDir, ".pm-agent", "remote-repositories", repo.id);
       return {
         id: repo.id,
         name: repo.name,
@@ -156,7 +157,11 @@ async function buildDashboardRepositories(targetDir: string, repositoryLinks: st
         github: repo.github,
         project: repo.project,
         context: contextById.get(repo.id) ?? contextById.get(repo.name ?? "") ?? "",
-        understanding: localPath ? await readRepositoryUnderstanding(localPath) : undefined
+        understanding: localPath
+          ? await readRepositoryUnderstanding(localPath)
+          : existsSync(remotePath)
+            ? await readRemoteRepositoryUnderstanding(remotePath)
+            : undefined
       };
     })
   );
@@ -175,6 +180,14 @@ async function readRepositoryUnderstanding(repoDir: string): Promise<DashboardRe
     projectBrief: await readText(path.join(repoDir, ".pm-agent/project/project-brief.md")),
     areaMap: await readText(path.join(repoDir, ".pm-agent/project/area-map.md")),
     safetyReport: await readText(path.join(repoDir, ".pm-agent/safety/safety-report.md"))
+  };
+}
+
+async function readRemoteRepositoryUnderstanding(repoDir: string): Promise<DashboardRepository["understanding"]> {
+  return {
+    projectBrief: await readText(path.join(repoDir, "project/project-brief.md")),
+    areaMap: await readText(path.join(repoDir, "project/area-map.md")),
+    safetyReport: await readText(path.join(repoDir, "safety/safety-report.md"))
   };
 }
 
