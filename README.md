@@ -129,7 +129,7 @@ npm run pm-agent -- dashboard ../progress-ledger --port 4790
 npm run pm-agent -- dashboard ../progress-ledger --no-open
 ```
 
-The dashboard is a local-only browser UI for reading the ledger. It shows status, daily reports, share drafts, suggestions, task lists, repository context, repository links, and generated file lists from the selected date.
+The dashboard is a local-only browser UI for reading the ledger. It shows status, daily reports, share drafts, suggestions, task lists, repository context, repository links, and generated file lists from the selected date. Repository details can be opened by URL, for example `?tab=repositories&repo=study-forge`.
 
 Repository understanding:
 

@@ -3,6 +3,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { today } from "../core/date.js";
+import { parseRepositoryLinks } from "../core/markdown.js";
 import { openFile } from "../core/open.js";
 import { statusCommand } from "./status.js";
 
@@ -21,12 +22,22 @@ type DashboardData = {
   suggestions: string;
   repositoryContext: string;
   repositoryLinks: string;
+  repositories: DashboardRepository[];
   tasks: Record<string, string>;
   files: {
     dailyReports: string[];
     shareReports: string[];
     suggestions: string[];
   };
+};
+
+type DashboardRepository = {
+  id: string;
+  name?: string;
+  path?: string;
+  github?: string;
+  project?: string;
+  context?: string;
 };
 
 const dashboardServers = new Map<string, http.Server>();
@@ -99,14 +110,17 @@ async function handleRequest(targetDir: string, request: http.IncomingMessage, r
 }
 
 async function readDashboardData(targetDir: string, date: string): Promise<DashboardData> {
+  const repositoryContext = await readText(path.join(targetDir, "context/repositories.md"));
+  const repositoryLinks = await readText(path.join(targetDir, "links/repositories.md"));
   return {
     date,
     status: await statusCommand(targetDir, date),
     dailyReport: await readText(path.join(targetDir, "reports/daily", `${date}.md`)),
     shareReport: await readText(path.join(targetDir, "reports/share", `${date}.md`)),
     suggestions: await readText(path.join(targetDir, "suggestions", `${date}.md`)),
-    repositoryContext: await readText(path.join(targetDir, "context/repositories.md")),
-    repositoryLinks: await readText(path.join(targetDir, "links/repositories.md")),
+    repositoryContext,
+    repositoryLinks,
+    repositories: buildDashboardRepositories(repositoryLinks, repositoryContext),
     tasks: {
       active: await readText(path.join(targetDir, "tasks/active.md")),
       waiting: await readText(path.join(targetDir, "tasks/waiting.md")),
@@ -120,6 +134,40 @@ async function readDashboardData(targetDir: string, date: string): Promise<Dashb
       suggestions: await listMarkdownNames(path.join(targetDir, "suggestions"))
     }
   };
+}
+
+function buildDashboardRepositories(repositoryLinks: string, repositoryContext: string): DashboardRepository[] {
+  const contextById = extractRepositoryContextSections(repositoryContext);
+  return parseRepositoryLinks(repositoryLinks).map((repo) => ({
+    id: repo.id,
+    name: repo.name,
+    path: repo.path,
+    github: repo.github,
+    project: repo.project,
+    context: contextById.get(repo.id) ?? contextById.get(repo.name ?? "") ?? ""
+  }));
+}
+
+function extractRepositoryContextSections(markdown: string): Map<string, string> {
+  const sections = new Map<string, string>();
+  const lines = markdown.split(/\r?\n/);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(/^(#{2,3})\s+(.+)\s*$/);
+    if (!match) continue;
+
+    const level = match[1].length;
+    const title = match[2].trim();
+    const body: string[] = [];
+    for (const line of lines.slice(index + 1)) {
+      const nextHeading = line.match(/^(#{2,6})\s+/);
+      if (nextHeading && nextHeading[1].length <= level) break;
+      body.push(line);
+    }
+    sections.set(title, [`${"#".repeat(level)} ${title}`, ...body].join("\n").trim());
+  }
+
+  return sections;
 }
 
 async function readText(filePath: string): Promise<string> {
@@ -352,6 +400,64 @@ function renderDashboardHtml(): string {
       font-size: 12px;
     }
 
+    .repo-layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .repo-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .repo-link {
+      display: block;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      text-decoration: none;
+      background: #fff;
+    }
+
+    .repo-link:hover {
+      border-color: var(--accent);
+    }
+
+    .repo-link.active {
+      border-color: var(--accent);
+      background: var(--accent-weak);
+    }
+
+    .repo-link strong {
+      display: block;
+      font-size: 14px;
+      line-height: 1.3;
+    }
+
+    .repo-link span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .repo-meta {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .repo-meta div {
+      overflow-wrap: anywhere;
+    }
+
     @media (max-width: 820px) {
       .app { grid-template-columns: 1fr; }
       aside {
@@ -362,6 +468,7 @@ function renderDashboardHtml(): string {
       }
       main { padding: 16px; }
       .grid { grid-template-columns: 1fr; }
+      .repo-layout { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -399,7 +506,7 @@ function renderDashboardHtml(): string {
   <script>
     const params = new URLSearchParams(window.location.search);
     const initialTab = params.get("tab") || "status";
-    const state = { tab: initialTab, data: null };
+    const state = { tab: initialTab, repo: params.get("repo") || "", data: null };
     const titles = {
       status: "Status",
       daily: "Daily Report",
@@ -427,6 +534,7 @@ function renderDashboardHtml(): string {
       button.addEventListener("click", () => {
         state.tab = button.dataset.tab;
         document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab === button));
+        updateUrl();
         render();
       });
     });
@@ -458,10 +566,7 @@ function renderDashboardHtml(): string {
           button.addEventListener("click", () => copyText(state.data.tasks[button.dataset.copyTask] || ""));
         });
       } else if (state.tab === "repositories") {
-        content.innerHTML = '<div class="grid">' +
-          '<div class="block"><div class="block-head"><h3>Repository Context</h3><button class="copy-button" type="button" data-copy-repository="context">Copy</button></div>' + markdownBlock(state.data.repositoryContext, "No repository context. Run setup --select-repos or edit context/repositories.md.") + '</div>' +
-          '<div class="block"><div class="block-head"><h3>Repository Links</h3><button class="copy-button" type="button" data-copy-repository="links">Copy</button></div>' + markdownBlock(state.data.repositoryLinks, "No repository links. Run setup --select-repos or edit links/repositories.md.") + '</div>' +
-          '</div>';
+        content.innerHTML = repositoriesBlock();
       } else if (state.tab === "files") {
         content.innerHTML = filesBlock(state.data.files);
       }
@@ -480,6 +585,47 @@ function renderDashboardHtml(): string {
         .join("") + '</div>';
     }
 
+    function repositoriesBlock() {
+      const repos = state.data.repositories || [];
+      if (!repos.length) return markdownBlock(state.data.repositoryLinks, "No repositories. Run setup --select-repos or edit links/repositories.md.");
+      const selected = repos.find((repo) => repo.id === state.repo) || repos[0];
+      state.repo = selected.id;
+      const list = repos.map((repo) => {
+        const href = "?tab=repositories&repo=" + encodeURIComponent(repo.id) + "&date=" + encodeURIComponent(dateInput.value);
+        return '<a class="repo-link' + (repo.id === selected.id ? ' active' : '') + '" href="' + href + '" data-repo-id="' + escapeHtml(repo.id) + '">' +
+          '<strong>' + escapeHtml(repo.name || repo.id) + '</strong>' +
+          '<span>' + escapeHtml(repo.github || repo.path || repo.project || repo.id) + '</span>' +
+          '</a>';
+      }).join("");
+      return '<div class="repo-layout">' +
+        '<div class="block"><div class="block-head"><h3>Repositories</h3><button class="copy-button" type="button" data-copy-repository="links">Copy</button></div><div class="repo-list">' + list + '</div></div>' +
+        '<div class="block"><div class="block-head"><h3>' + escapeHtml(selected.name || selected.id) + '</h3><button class="copy-button" type="button" data-copy-repository="selected">Copy</button></div>' +
+        repoMetaBlock(selected) +
+        markdownBlock(selected.context || repositoryRecordText(selected), "No repository context. Run setup --select-repos or edit context/repositories.md.") +
+        '</div>' +
+        '</div>';
+    }
+
+    function repoMetaBlock(repo) {
+      return '<div class="repo-meta">' +
+        '<div><strong>ID:</strong> ' + escapeHtml(repo.id || "") + '</div>' +
+        (repo.github ? '<div><strong>GitHub:</strong> ' + escapeHtml(repo.github) + '</div>' : '') +
+        (repo.path ? '<div><strong>Local:</strong> ' + escapeHtml(repo.path) + '</div>' : '') +
+        (repo.project ? '<div><strong>Project:</strong> ' + escapeHtml(repo.project) + '</div>' : '') +
+        '</div>';
+    }
+
+    function repositoryRecordText(repo) {
+      return [
+        "# " + (repo.name || repo.id),
+        "",
+        "- id: " + (repo.id || ""),
+        repo.github ? "- github: " + repo.github : "",
+        repo.path ? "- path: " + repo.path : "",
+        repo.project ? "- project: " + repo.project : ""
+      ].filter(Boolean).join("\\n");
+    }
+
     content.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLButtonElement)) return;
@@ -492,7 +638,18 @@ function renderDashboardHtml(): string {
         copyText(state.data.repositoryContext || "");
       } else if (repositoryGroup === "links") {
         copyText(state.data.repositoryLinks || "");
+      } else if (repositoryGroup === "selected") {
+        copyText(selectedRepositoryText());
       }
+    });
+
+    content.addEventListener("click", (event) => {
+      const link = event.target instanceof Element ? event.target.closest("[data-repo-id]") : null;
+      if (!(link instanceof HTMLAnchorElement)) return;
+      event.preventDefault();
+      state.repo = link.dataset.repoId || "";
+      updateUrl();
+      render();
     });
 
     function currentViewText() {
@@ -512,10 +669,25 @@ function renderDashboardHtml(): string {
           .join("\\n\\n");
       }
       if (state.tab === "repositories") {
-        return "# Repository Context\\n\\n" + (state.data.repositoryContext || "") +
-          "\\n\\n# Repository Links\\n\\n" + (state.data.repositoryLinks || "");
+        return selectedRepositoryText();
       }
       return "";
+    }
+
+    function selectedRepositoryText() {
+      const repos = state.data?.repositories || [];
+      const selected = repos.find((repo) => repo.id === state.repo) || repos[0];
+      if (!selected) return "# Repository Links\\n\\n" + (state.data?.repositoryLinks || "");
+      return repositoryRecordText(selected) + "\\n\\n" + (selected.context || "");
+    }
+
+    function updateUrl() {
+      const next = new URLSearchParams(window.location.search);
+      next.set("tab", state.tab);
+      next.set("date", dateInput.value);
+      if (state.tab === "repositories" && state.repo) next.set("repo", state.repo);
+      else next.delete("repo");
+      window.history.replaceState(null, "", "?" + next.toString());
     }
 
     async function copyText(text) {
