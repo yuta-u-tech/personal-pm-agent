@@ -8,6 +8,7 @@ import { shareCommand } from "./commands/share.js";
 import { statusCommand } from "./commands/status.js";
 import { suggestCommand } from "./commands/suggest.js";
 import { taskCommand } from "./commands/task.js";
+import { understandCommand } from "./commands/understand.js";
 
 export async function startShell(targetDir: string): Promise<void> {
   const rl = readline.createInterface({ input, output, prompt: "pm-agent> " });
@@ -47,6 +48,11 @@ async function runShellCommand(targetDir: string, line: string): Promise<string>
     const tab = parseDashboardTab(args[0] ?? "status");
     const dashboardUrl = await openDashboard(targetDir, tab);
     return `Opened dashboard:\n- Dashboard: ${dashboardUrl}`;
+  }
+  if (command === "/understand") {
+    const repoDir = args.find((arg) => !arg.startsWith("--")) ?? process.cwd();
+    const result = await understandCommand(repoDir, { refresh: args.includes("--refresh") });
+    return `${result}\n\nNext:\n- Review .pm-agent/project/project-brief.md in that repository.\n- Review .pm-agent/project/area-map.md for planning by area.\n- Review .pm-agent/safety/safety-report.md before using summaries for LLM planning.`;
   }
   if (command === "/collect") {
     await collectCommand(targetDir);
@@ -147,6 +153,7 @@ function helpText(): string {
 /morning [--adapter background-agent|mock]
 /collect
 /dashboard [status|daily|share|suggestions|tasks|repositories|files]
+/understand [repo-dir] [--refresh]
 /report [--adapter background-agent|mock] [--no-open]
 /share [--no-open]
 /suggest [--no-open]

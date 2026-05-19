@@ -8,6 +8,7 @@ import { shareCommand } from "./commands/share.js";
 import { setupCommand } from "./commands/setup.js";
 import { suggestCommand } from "./commands/suggest.js";
 import { taskCommand } from "./commands/task.js";
+import { understandCommand } from "./commands/understand.js";
 import { assertDateString } from "./core/date.js";
 import { resolveTarget } from "./core/fs.js";
 import { openFile } from "./core/open.js";
@@ -50,6 +51,18 @@ async function main(): Promise<void> {
   if (command === "dashboard") {
     const message = await dashboardCommand(targetDir, parsed.options);
     console.log(message);
+    return;
+  }
+
+  if (command === "understand") {
+    const message = await understandCommand(targetDir, parsed.options);
+    console.log(`${message}
+
+Next:
+1. Review the brief: ${targetDir}/.pm-agent/project/project-brief.md
+2. Review the area map: ${targetDir}/.pm-agent/project/area-map.md
+3. Review safety findings: ${targetDir}/.pm-agent/safety/safety-report.md
+4. Rebuild with --refresh when the repository changes significantly.`);
     return;
   }
 
@@ -106,6 +119,7 @@ Usage:
   pm-agent setup [ledger-dir] [--ledger-name progress-ledger] [--private|--public] [--owner github-user] [--select-repos] [--repo-scope all|owned|collaborating] [--no-github]
   pm-agent collect [ledger-dir]
   pm-agent dashboard [ledger-dir] [--port 4783] [--no-open]
+  pm-agent understand [repo-dir] [--refresh]
   pm-agent report [ledger-dir] [--adapter mock|background-agent] [--open]
   pm-agent share [ledger-dir] [--open]
   pm-agent suggest [ledger-dir] [--open]
@@ -144,6 +158,7 @@ function parseArgs(args: string[]): {
     port?: string;
     id?: string;
     number?: string;
+    refresh?: boolean;
   };
 } {
   const options: {
@@ -167,6 +182,7 @@ function parseArgs(args: string[]): {
     port?: string;
     id?: string;
     number?: string;
+    refresh?: boolean;
   } = {};
   let target: string | undefined;
   let taskAction: string | undefined;
@@ -274,6 +290,10 @@ function parseArgs(args: string[]): {
     if (arg === "--number") {
       options.number = args[index + 1];
       index += 1;
+      continue;
+    }
+    if (arg === "--refresh") {
+      options.refresh = true;
       continue;
     }
     if (!target) target = arg;

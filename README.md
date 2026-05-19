@@ -18,6 +18,7 @@ npm run pm-agent -- setup
 npm run pm-agent -- init ../progress-ledger
 npm run pm-agent -- morning ../progress-ledger
 npm run pm-agent -- dashboard ../progress-ledger
+npm run pm-agent -- understand ../your-project-repo
 ```
 
 Daily use after setup:
@@ -129,6 +130,25 @@ npm run pm-agent -- dashboard ../progress-ledger --no-open
 ```
 
 The dashboard is a local-only browser UI for reading the ledger. It shows status, daily reports, share drafts, suggestions, task lists, repository context, repository links, and generated file lists from the selected date.
+
+Repository understanding:
+
+```sh
+npm run pm-agent -- understand ../study-forge
+npm run pm-agent -- understand ../study-forge --refresh
+```
+
+`understand` reads git-tracked files only, applies `.pm-agentignore`, scans and redacts secret-like values, and writes a local project knowledge base under the target repository:
+
+- `.pm-agent/catalog/file-cards.json`
+- `.pm-agent/graph/dependency-graph.json`
+- `.pm-agent/graph/reverse-dependency-index.json`
+- `.pm-agent/file-summaries/`
+- `.pm-agent/project/project-brief.md`
+- `.pm-agent/project/area-map.md`
+- `.pm-agent/project/capability-map.json`
+- `.pm-agent/project/issue-map.json`
+- `.pm-agent/safety/safety-report.md`
 
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:
