@@ -40,6 +40,9 @@ type FileCard = {
   headings?: string[];
   tests?: TestInfo[];
   packageInfo?: PackageInfo;
+  contentSignals?: string[];
+  responsibilities?: string[];
+  risks?: string[];
   signals: string[];
   guessedRole?: string;
   sensitive?: boolean;
@@ -424,8 +427,9 @@ function createFileCard(filePath: string, content: string, hash: string, sensiti
   const headings = language === "markdown" ? extractMarkdownHeadings(content) : undefined;
   const tests = extractTests(content);
   const packageInfo = filePath === "package.json" ? extractPackageInfo(content) : undefined;
+  const contentAnalysis = analyzeContent(filePath, content);
   const packageSignals = packageInfo ? [...Object.keys(packageInfo.scripts ?? {}), ...Object.keys(packageInfo.dependencies ?? {}), ...Object.keys(packageInfo.devDependencies ?? {})] : [];
-  const signals = collectSignals(filePath, [...imports, ...exports, ...symbols.map((symbol) => symbol.name), ...(headings ?? []), ...packageSignals]);
+  const signals = collectSignals(filePath, [...imports, ...exports, ...symbols.map((symbol) => symbol.name), ...(headings ?? []), ...packageSignals, ...contentAnalysis.signals]);
   const contentIncluded = sensitiveAction !== "structure-only";
 
   return {
@@ -442,6 +446,9 @@ function createFileCard(filePath: string, content: string, hash: string, sensiti
     headings,
     tests: tests.length ? tests : undefined,
     packageInfo,
+    contentSignals: contentAnalysis.signals,
+    responsibilities: contentAnalysis.responsibilities,
+    risks: contentAnalysis.risks,
     signals,
     guessedRole: guessRole(filePath),
     sensitive: Boolean(sensitiveAction),
@@ -471,7 +478,101 @@ function extractImports(content: string): string[] {
   for (const match of content.matchAll(/require\(["']([^"']+)["']\)/g)) {
     imports.add(match[1]);
   }
+  for (const match of content.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) {
+    const value = match[1];
+    if (value.startsWith("./") || value.startsWith("../") || value.startsWith("/")) imports.add(value);
+  }
+  for (const match of content.matchAll(/fetch\(["']([^"']+)["']\)/g)) {
+    imports.add(match[1]);
+  }
   return [...imports];
+}
+
+function analyzeContent(filePath: string, content: string): { signals: string[]; responsibilities: string[]; risks: string[] } {
+  const signals = new Set<string>();
+  const responsibilities = new Set<string>();
+  const risks = new Set<string>();
+  const lower = content.toLowerCase();
+
+  if (/index\.html$/.test(filePath)) {
+    responsibilities.add("Render the home entry page and load the home script.");
+    signals.add("home");
+    signals.add("entrypoint");
+  }
+  if (/study\.html$/.test(filePath)) {
+    responsibilities.add("Render the study page shell used by subject-specific learning flows.");
+    signals.add("study");
+    signals.add("entrypoint");
+  }
+  if (/home\.js$/.test(filePath)) {
+    responsibilities.add("Load subject metadata and render the home subject cards.");
+    responsibilities.add("Register the service worker for offline use.");
+    signals.add("home");
+    signals.add("subjects");
+  }
+  if (/app\.js$/.test(filePath)) {
+    responsibilities.add("Manage study page state, modes, filters, progress, quizzes, materials, and review flows.");
+    signals.add("study");
+    signals.add("quiz");
+    signals.add("progress");
+    signals.add("materials");
+  }
+  if (/service-worker\.js$/.test(filePath)) {
+    responsibilities.add("Cache application assets for offline use.");
+    risks.add("Cache asset list changes can break offline behavior if stale or incomplete.");
+    signals.add("offline");
+    signals.add("cache");
+  }
+  if (/manifest\.json$/.test(filePath)) {
+    responsibilities.add("Define PWA metadata and install behavior.");
+    signals.add("pwa");
+  }
+  if (/styles\.css$/.test(filePath)) {
+    responsibilities.add("Define visual layout, themes, responsive behavior, and component styling.");
+    signals.add("theme");
+    signals.add("layout");
+  }
+  if (/data\/index\.json$/.test(filePath)) {
+    responsibilities.add("Register available subjects and map each subject id to its data file and display metadata.");
+    signals.add("subjects");
+    signals.add("catalog");
+  }
+  if (/data\/.+\.json$/.test(filePath) && !/data\/index\.json$/.test(filePath)) {
+    responsibilities.add("Provide subject content such as terms, materials, quizzes, chapters, and explanations.");
+    signals.add("content");
+    signals.add("subject");
+  }
+  if (lower.includes("localstorage")) {
+    responsibilities.add("Persist user progress in browser localStorage.");
+    risks.add("Changing progress key shape can break saved user progress.");
+    signals.add("persistence");
+  }
+  if (lower.includes("wrongquestions")) {
+    responsibilities.add("Track wrong answers for review sessions.");
+    signals.add("review");
+  }
+  if (lower.includes("navigator.serviceworker")) {
+    responsibilities.add("Connect the page to the browser service worker lifecycle.");
+    signals.add("service-worker");
+  }
+  if (lower.includes("urlsearchparams")) {
+    responsibilities.add("Read and synchronize state through URL query parameters.");
+    signals.add("routing");
+  }
+  if (lower.includes("fetch(")) {
+    responsibilities.add("Load JSON or asset resources at runtime.");
+    signals.add("data-loading");
+  }
+  if (lower.includes("quiz")) signals.add("quiz");
+  if (lower.includes("terms")) signals.add("terms");
+  if (lower.includes("materials")) signals.add("materials");
+  if (lower.includes("chapter")) signals.add("chapter");
+
+  return {
+    signals: [...signals],
+    responsibilities: [...responsibilities],
+    risks: [...risks]
+  };
 }
 
 function extractExports(content: string): string[] {
@@ -560,10 +661,15 @@ function resolveKnownPath(base: string, known: Set<string>): string | null {
     `${base}.jsx`,
     `${base}.mjs`,
     `${base}.cjs`,
+    `${base}.css`,
+    `${base}.html`,
+    `${base}.json`,
+    `${base}.svg`,
     `${base}/index.ts`,
     `${base}/index.tsx`,
     `${base}/index.js`,
-    `${base}/index.jsx`
+    `${base}/index.jsx`,
+    `${base}/index.json`
   ];
   return candidates.find((candidate) => known.has(candidate)) ?? null;
 }
@@ -589,6 +695,10 @@ function selectDeepReadCandidates(cards: FileCard[], edges: DependencyEdge[]): D
         score += 20;
         reasons.push("overview");
       }
+      if (/^(index|study)\.html$|^(app|home|main|server|service-worker)\.js$|^styles\.css$|^manifest\.json$|^data\/index\.json$/.test(card.path)) {
+        score += 18;
+        reasons.push("static-app-core");
+      }
       if (/package\.json$|tsconfig\.json$|Dockerfile$/.test(card.path)) {
         score += 15;
         reasons.push("runtime");
@@ -601,9 +711,17 @@ function selectDeepReadCandidates(cards: FileCard[], edges: DependencyEdge[]): D
         score += 10;
         reasons.push("core");
       }
+      if (card.responsibilities?.length) {
+        score += Math.min(card.responsibilities.length * 3, 12);
+        reasons.push("content-responsibility");
+      }
       if (/src\/(components|pages|controllers|handlers)\//.test(card.path)) {
         score += 8;
         reasons.push("interface");
+      }
+      if (/^data\/.+\.json$/.test(card.path) && !/^data\/index\.json$/.test(card.path)) {
+        score += 2;
+        reasons.push("representative-data");
       }
       if (/prisma\/schema\.prisma|migrations|models/.test(card.path)) {
         score += 8;
@@ -702,12 +820,15 @@ function buildProjectUnderstanding(cards: FileCard[], edges: DependencyEdge[], c
   const brief = {
     purpose: inferPurpose(cards),
     techStack: inferTechStack(cards),
-    mainFeatures: capabilities.capabilities.slice(0, 10).map((capability) => capability.name),
-    currentPhase: "unknown",
+    mainFeatures: inferMainFeatures(cards, capabilities.capabilities.slice(0, 10).map((capability) => capability.name)),
+    currentPhase: inferCurrentPhase(cards),
     currentStatus: "Project understanding generated from git-tracked files.",
     importantAreas: areas.areas.map((area) => area.name),
     bottlenecks: candidates.filter((candidate) => candidate.reasons.includes("huge-file-penalty")).map((candidate) => candidate.path),
-    risks: cards.filter((card) => card.sensitive).map((card) => `${card.path}: sensitive handling required`),
+    risks: [
+      ...cards.filter((card) => card.sensitive).map((card) => `${card.path}: sensitive handling required`),
+      ...new Set(cards.flatMap((card) => card.risks ?? []))
+    ],
     planningRules: [
       "Use issue text to match signals before selecting files.",
       "Prefer deep-read candidates over broad repository reads.",
@@ -740,13 +861,32 @@ function buildAreas(cards: FileCard[]) {
   return {
     areas: [...groups.entries()].map(([name, files]) => ({
       name,
-      purpose: `${name} area inferred from repository structure.`,
+      purpose: inferAreaPurpose(name),
       importantFiles: files.slice(0, 12).map((file) => file.path),
       relatedCapabilities: [...new Set(files.flatMap((file) => file.signals))].slice(0, 12),
       relatedIssues: [],
-      risks: files.some((file) => file.sensitive) ? ["contains sensitive-handling files"] : []
+      risks: [
+        ...new Set([
+          ...files.flatMap((file) => file.risks ?? []),
+          ...(files.some((file) => file.sensitive) ? ["contains sensitive-handling files"] : [])
+        ])
+      ]
     }))
   };
+}
+
+function inferAreaPurpose(area: string): string {
+  const purposes: Record<string, string> = {
+    overview: "Project documentation, operating notes, and setup instructions.",
+    home: "Home screen and subject selection entry flow.",
+    study: "Study experience, learning modes, quiz flow, review flow, and per-subject navigation.",
+    data: "Subject catalog and learning content consumed by the app.",
+    offline: "PWA manifest and service worker behavior for offline use.",
+    styling: "Visual system, layout, themes, and responsive presentation.",
+    assets: "Static visual assets used by the app.",
+    config: "Repository and platform configuration."
+  };
+  return purposes[area] ?? `${area} area inferred from repository structure.`;
 }
 
 function buildCapabilities(cards: FileCard[]) {
@@ -780,7 +920,10 @@ function renderFileSummary(card: FileCard, candidate: DeepReadCandidate): string
 ${card.guessedRole ?? "Role inferred from file path and symbols."}
 
 ## Responsibilities
-${card.symbols.slice(0, 10).map((symbol) => `- ${symbol.kind}: ${symbol.name}`).join("\n") || "- No top-level symbols detected."}
+${[
+  ...(card.responsibilities ?? []),
+  ...card.symbols.slice(0, 10).map((symbol) => `${symbol.kind}: ${symbol.name}`)
+].map((item) => `- ${item}`).join("\n") || "- No responsibilities inferred."}
 
 ## Dependencies
 ${card.imports.map((item) => `- ${item}`).join("\n") || "- No imports detected."}
@@ -792,7 +935,10 @@ ${card.signals.slice(0, 12).map((signal) => `- ${signal}`).join("\n") || "- No s
 ${candidate.reasons.map((reason) => `- ${reason}`).join("\n")}
 
 ## Potential Risks
-${card.sensitive ? "- Sensitive file handling required." : "- No obvious risk inferred by the MVP analyzer."}
+${[
+  ...(card.risks ?? []),
+  ...(card.sensitive ? ["Sensitive file handling required."] : [])
+].map((risk) => `- ${risk}`).join("\n") || "- No obvious risk inferred by the analyzer."}
 `;
 }
 
@@ -910,6 +1056,11 @@ function inferTechStack(cards: FileCard[]): string[] {
   const stack = new Set<string>();
   for (const card of cards) {
     if (card.path === "package.json") stack.add("Node.js");
+    if (card.path.endsWith(".html")) stack.add("HTML");
+    if (card.path.endsWith(".css")) stack.add("CSS");
+    if (card.path.endsWith(".js")) stack.add("Vanilla JavaScript");
+    if (card.path === "manifest.json" || card.path === "service-worker.js") stack.add("PWA");
+    if (card.path.startsWith("data/") && card.path.endsWith(".json")) stack.add("JSON data files");
     if (card.path.endsWith(".ts") || card.path.endsWith(".tsx")) stack.add("TypeScript");
     if (card.path.endsWith(".tsx") || card.imports.some((item) => item.includes("react"))) stack.add("React");
     if (card.path.includes("prisma/")) stack.add("Prisma");
@@ -918,12 +1069,41 @@ function inferTechStack(cards: FileCard[]): string[] {
   return [...stack];
 }
 
+function inferMainFeatures(cards: FileCard[], fallback: string[]): string[] {
+  const features = new Set<string>();
+  const has = (predicate: (card: FileCard) => boolean) => cards.some(predicate);
+  if (has((card) => card.path === "index.html" || card.path === "home.js")) features.add("Home subject selection");
+  if (has((card) => card.path === "study.html" || card.path === "app.js")) features.add("Subject study page");
+  if (has((card) => card.signals.includes("terms"))) features.add("Term cards");
+  if (has((card) => card.signals.includes("quiz"))) features.add("Quiz practice");
+  if (has((card) => card.signals.includes("materials"))) features.add("Learning materials");
+  if (has((card) => card.signals.includes("progress") || card.signals.includes("persistence"))) features.add("Local progress tracking");
+  if (has((card) => card.signals.includes("review"))) features.add("Wrong-answer review");
+  if (has((card) => card.path === "service-worker.js")) features.add("Offline support");
+  if (has((card) => card.path === "data/index.json")) features.add("Subject catalog");
+  return [...features, ...fallback.filter((item) => !features.has(item))].slice(0, 12);
+}
+
+function inferCurrentPhase(cards: FileCard[]): string {
+  if (cards.some((card) => card.path === ".nojekyll") && cards.some((card) => card.path === "service-worker.js")) {
+    return "deployed static PWA";
+  }
+  if (cards.some((card) => card.path === "README.md")) return "documented project";
+  return "unknown";
+}
+
 function inferUsefulCommands(packageCard?: FileCard): string[] {
   return Object.keys(packageCard?.packageInfo?.scripts ?? {}).map((name) => `npm run ${name}`);
 }
 
 function inferArea(filePath: string): string {
   const parts = filePath.split("/");
+  if (filePath === "README.md") return "overview";
+  if (filePath === "index.html" || filePath === "home.js") return "home";
+  if (filePath === "study.html" || filePath === "app.js") return "study";
+  if (filePath === "service-worker.js" || filePath === "manifest.json") return "offline";
+  if (filePath === "styles.css") return "styling";
+  if (filePath === ".gitignore" || filePath === ".nojekyll") return "config";
   if (parts[0] === "src" && parts[1]) return parts[1];
   if (parts[0] === "app") return "app";
   if (parts[0] === "docs") return "docs";
@@ -933,6 +1113,15 @@ function inferArea(filePath: string): string {
 
 function guessRole(filePath: string): string {
   if (/README\.md$/i.test(filePath)) return "project overview";
+  if (filePath === "index.html") return "home page entrypoint";
+  if (filePath === "study.html") return "study page shell";
+  if (filePath === "home.js") return "home page controller";
+  if (filePath === "app.js") return "study app controller";
+  if (filePath === "service-worker.js") return "offline cache service worker";
+  if (filePath === "manifest.json") return "PWA manifest";
+  if (filePath === "styles.css") return "application stylesheet";
+  if (filePath === "data/index.json") return "subject catalog";
+  if (/^data\/.+\.json$/.test(filePath)) return "subject content data";
   if (filePath === "package.json") return "package manifest";
   if (/src\/components\//.test(filePath)) return "UI component";
   if (/src\/app\/.*page\.tsx$/.test(filePath)) return "page route";
