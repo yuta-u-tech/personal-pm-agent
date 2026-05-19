@@ -333,7 +333,9 @@ function renderDashboardHtml(): string {
       box-shadow: var(--shadow);
       min-height: calc(100vh - 88px);
       padding: 22px;
-      overflow: auto;
+      overflow-x: hidden;
+      overflow-y: auto;
+      min-width: 0;
     }
 
     .grid {
@@ -348,6 +350,8 @@ function renderDashboardHtml(): string {
       padding: 14px;
       background: #fff;
       min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
     }
 
     .block h3 {
@@ -378,6 +382,8 @@ function renderDashboardHtml(): string {
       margin: 0;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+      word-break: break-word;
+      max-width: 100%;
       font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
@@ -402,14 +408,18 @@ function renderDashboardHtml(): string {
 
     .repo-layout {
       display: grid;
-      grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
       gap: 16px;
       align-items: start;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
     }
 
     .repo-list {
       display: grid;
       gap: 8px;
+      min-width: 0;
     }
 
     .repo-link {
@@ -420,6 +430,9 @@ function renderDashboardHtml(): string {
       color: var(--text);
       text-decoration: none;
       background: #fff;
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
     }
 
     .repo-link:hover {
@@ -435,6 +448,8 @@ function renderDashboardHtml(): string {
       display: block;
       font-size: 14px;
       line-height: 1.3;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .repo-link span {
@@ -444,6 +459,7 @@ function renderDashboardHtml(): string {
       font-size: 12px;
       line-height: 1.35;
       overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .repo-meta {
