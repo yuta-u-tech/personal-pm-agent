@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { understandCommand } from "./understand.js";
@@ -63,4 +64,15 @@ test("understand generates project knowledge without raw secret values", async (
 
   const secondMessage = await understandCommand(repoDir);
   assert.match(secondMessage, /file cards reused: [1-9]/);
+});
+
+test("understand rejects non-git directories before writing agent files", async () => {
+  const targetDir = await mkdtemp(path.join(os.tmpdir(), "pm-agent-not-git-"));
+
+  await assert.rejects(
+    () => understandCommand(targetDir, { refresh: true }),
+    /not a Git repository/
+  );
+  assert.equal(existsSync(path.join(targetDir, ".pm-agent")), false);
+  assert.equal(existsSync(path.join(targetDir, ".pm-agentignore")), false);
 });

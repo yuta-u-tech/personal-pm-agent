@@ -220,13 +220,13 @@ const LIMITS = {
 
 export async function understandCommand(targetDir: string, options: UnderstandOptions = {}): Promise<string> {
   const repoDir = path.resolve(targetDir);
+  const files = await listGitFiles(repoDir);
 
   await writeTextIfMissing(path.join(repoDir, ".pm-agentignore"), DEFAULT_IGNORE);
   await ensureKnowledgeDirs(repoDir);
 
   const cache = options.refresh ? emptyCache() : await readCache(repoDir);
   const previousCards = options.refresh ? new Map<string, FileCard>() : await readPreviousFileCards(repoDir);
-  const files = await listGitFiles(repoDir);
   const ignorePatterns = await readIgnorePatterns(repoDir);
   const candidateFiles = files.filter((file) => shouldIncludeDespiteIgnore(file) || !matchesAny(file, ignorePatterns));
   const sensitiveDecisions = await resolveSensitiveActions(candidateFiles);
@@ -329,7 +329,13 @@ async function ensureKnowledgeDirs(repoDir: string): Promise<void> {
 }
 
 async function listGitFiles(repoDir: string): Promise<string[]> {
-  const { stdout } = await execFileAsync("git", ["ls-files"], { cwd: repoDir });
+  let stdout = "";
+  try {
+    const result = await execFileAsync("git", ["ls-files"], { cwd: repoDir });
+    stdout = result.stdout;
+  } catch {
+    throw new Error(`Cannot understand ${repoDir}: not a Git repository. Clone the project first, then run pm-agent understand again.`);
+  }
   return stdout
     .split("\n")
     .map((line) => line.trim())
