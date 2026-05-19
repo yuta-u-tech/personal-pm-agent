@@ -8,6 +8,7 @@ import { shareCommand } from "./commands/share.js";
 import { setupCommand } from "./commands/setup.js";
 import { suggestCommand } from "./commands/suggest.js";
 import { taskCommand } from "./commands/task.js";
+import { understandActiveCommand } from "./commands/understand-active.js";
 import { understandCommand } from "./commands/understand.js";
 import { assertDateString } from "./core/date.js";
 import { resolveTarget } from "./core/fs.js";
@@ -66,6 +67,17 @@ Next:
     return;
   }
 
+  if (command === "understand-active") {
+    const message = await understandActiveCommand(targetDir, parsed.options);
+    console.log(`${message}
+
+Next:
+1. Open the dashboard: pm-agent dashboard ${targetDir}
+2. View active repo details in Repositories.
+3. Run with --refresh after larger repo changes.`);
+    return;
+  }
+
   if (command === "report") {
     const result = await reportCommand(targetDir, parsed.options);
     await maybeOpen(parsed.options.open, result.markdownPath);
@@ -120,6 +132,7 @@ Usage:
   pm-agent collect [ledger-dir]
   pm-agent dashboard [ledger-dir] [--port 4783] [--no-open]
   pm-agent understand [repo-dir] [--refresh]
+  pm-agent understand-active [ledger-dir] [--refresh] [--no-github]
   pm-agent report [ledger-dir] [--adapter mock|background-agent] [--open]
   pm-agent share [ledger-dir] [--open]
   pm-agent suggest [ledger-dir] [--open]

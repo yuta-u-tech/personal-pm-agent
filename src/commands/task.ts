@@ -368,7 +368,7 @@ async function importTaskCandidate(targetDir: string, list: TaskList, options: T
     throw new Error("Task candidate not found. Run `pm-agent task <ledger-dir> discover` first.");
   }
 
-  await addTask(targetDir, list, candidate.title);
+  await addTask(targetDir, list, candidate.title, candidate.repo);
   return `Imported candidate to ${list}: ${candidate.title}`;
 }
 

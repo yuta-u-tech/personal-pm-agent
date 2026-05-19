@@ -136,6 +136,7 @@ Repository understanding:
 ```sh
 npm run pm-agent -- understand ../study-forge
 npm run pm-agent -- understand ../study-forge --refresh
+npm run pm-agent -- understand-active ../progress-ledger --refresh
 ```
 
 `understand` reads git-tracked files only, applies `.pm-agentignore`, scans and redacts secret-like values, and writes a local project knowledge base under the target repository:
@@ -175,6 +176,16 @@ User approval allows scanning. User approval does not bypass redaction.
 ユーザーの許可はスキャン対象に含めるための許可であり、secretをLLMへそのまま送る許可ではありません。
 
 Redaction is a safety layer, not a formal guarantee. Review the Safety Report before using generated summaries for planning or model input.
+
+To understand only active repositories registered in the ledger:
+
+```sh
+npm run pm-agent -- understand-active ../progress-ledger
+npm run pm-agent -- understand-active ../progress-ledger --refresh
+npm run pm-agent -- understand-active ../progress-ledger --no-github
+```
+
+Active repositories are detected from `tasks/active.md` entries with `<!-- repo:<repo-id> -->` and, unless `--no-github` is passed, registered repositories that have open GitHub Issues assigned to you.
 
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:

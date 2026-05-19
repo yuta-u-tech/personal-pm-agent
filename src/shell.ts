@@ -8,6 +8,7 @@ import { shareCommand } from "./commands/share.js";
 import { statusCommand } from "./commands/status.js";
 import { suggestCommand } from "./commands/suggest.js";
 import { taskCommand } from "./commands/task.js";
+import { understandActiveCommand } from "./commands/understand-active.js";
 import { understandCommand } from "./commands/understand.js";
 
 export async function startShell(targetDir: string): Promise<void> {
@@ -53,6 +54,10 @@ async function runShellCommand(targetDir: string, line: string): Promise<string>
     const repoDir = args.find((arg) => !arg.startsWith("--")) ?? process.cwd();
     const result = await understandCommand(repoDir, { refresh: args.includes("--refresh") });
     return `${result}\n\nNext:\n- Review .pm-agent/project/project-brief.md in that repository.\n- Review .pm-agent/project/area-map.md for planning by area.\n- Review .pm-agent/safety/safety-report.md before using summaries for LLM planning.`;
+  }
+  if (command === "/understand-active") {
+    const result = await understandActiveCommand(targetDir, { refresh: args.includes("--refresh"), github: !args.includes("--no-github") });
+    return `${result}\n\nNext:\n- Run /dashboard repositories to inspect active repo understanding.`;
   }
   if (command === "/collect") {
     await collectCommand(targetDir);
@@ -154,6 +159,7 @@ function helpText(): string {
 /collect
 /dashboard [status|daily|share|suggestions|tasks|repositories|files]
 /understand [repo-dir] [--refresh]
+/understand-active [--refresh] [--no-github]
 /report [--adapter background-agent|mock] [--no-open]
 /share [--no-open]
 /suggest [--no-open]
