@@ -139,7 +139,7 @@ Usage:
   pm-agent collect [ledger-dir]
   pm-agent dashboard [ledger-dir] [--port 4783] [--no-open]
   pm-agent understand [repo-dir] [--refresh] [--budget cheap|standard|deep] [--llm] [--adapter background-agent] [--ledger ../progress-ledger]
-  pm-agent understand-active [ledger-dir] [--refresh] [--no-github]
+  pm-agent understand-active [ledger-dir] [--refresh] [--no-github] [--budget cheap|standard|deep] [--llm] [--adapter background-agent]
   pm-agent report [ledger-dir] [--adapter mock|background-agent] [--open]
   pm-agent share [ledger-dir] [--open]
   pm-agent suggest [ledger-dir] [--open]

@@ -15,6 +15,9 @@ const execFileAsync = promisify(execFile);
 export type UnderstandActiveOptions = {
   refresh?: boolean;
   github?: boolean;
+  budget?: string;
+  llm?: boolean;
+  adapter?: string;
 };
 
 type RegisteredRepository = Record<string, string>;
@@ -74,7 +77,13 @@ export async function understandActiveCommand(ledgerDir: string, options: Unders
     }
 
     try {
-      await understandCommand(repoPath, { refresh: options.refresh });
+      await understandCommand(repoPath, {
+        refresh: options.refresh,
+        budget: options.budget,
+        llm: options.llm,
+        adapter: options.adapter,
+        ledger: ledgerDir
+      });
       completed += 1;
       results.push(`✓ ${repoId}\n  path: ${repoPath}\n  active reason: ${active.reason}`);
     } catch (error) {

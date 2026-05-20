@@ -63,7 +63,13 @@ async function runShellCommand(targetDir: string, line: string): Promise<string>
     return `${result}\n\nNext:\n- Review .pm-agent/project/project-brief.md in that repository.\n- Review .pm-agent/llm/project-brief.md when --llm is used.\n- Review .pm-agent/safety/safety-report.md before using summaries for planning.`;
   }
   if (command === "/understand-active") {
-    const result = await understandActiveCommand(targetDir, { refresh: args.includes("--refresh"), github: !args.includes("--no-github") });
+    const result = await understandActiveCommand(targetDir, {
+      refresh: args.includes("--refresh"),
+      github: !args.includes("--no-github"),
+      budget: parseOption(args, "--budget"),
+      llm: args.includes("--llm"),
+      adapter: parseOption(args, "--adapter")
+    });
     return `${result}\n\nNext:\n- Run /dashboard repositories to inspect active repo understanding.`;
   }
   if (command === "/activate-repo") {
@@ -181,7 +187,7 @@ function helpText(): string {
 /collect
 /dashboard [status|daily|share|suggestions|tasks|repositories|files]
 /understand [repo-dir] [--refresh] [--budget cheap|standard|deep] [--llm] [--adapter background-agent]
-/understand-active [--refresh] [--no-github]
+/understand-active [--refresh] [--no-github] [--budget cheap|standard|deep] [--llm] [--adapter background-agent]
 /activate-repo <repo-id>
 /register-repo <repo-id>
 /deactivate-repo <repo-id>

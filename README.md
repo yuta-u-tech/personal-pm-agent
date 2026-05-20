@@ -200,6 +200,7 @@ To understand only active repositories registered in the ledger:
 npm run pm-agent -- understand-active ../progress-ledger
 npm run pm-agent -- understand-active ../progress-ledger --refresh
 npm run pm-agent -- understand-active ../progress-ledger --no-github
+npm run pm-agent -- understand-active ../progress-ledger --no-github --llm --adapter background-agent --budget cheap
 ```
 
 Active repositories are detected from explicit repository activation, `tasks/active.md` entries with `<!-- repo:<repo-id> -->`, and, unless `--no-github` is passed, registered repositories that have open GitHub Issues assigned to you.
