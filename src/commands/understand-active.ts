@@ -252,7 +252,7 @@ async function writeRemoteRepositoryUnderstanding(
 
   const [view, issues, readme] = await Promise.all([
     ghJson<GitHubRepoView>(["repo", "view", fullName, "--json", "nameWithOwner,description,homepageUrl,repositoryTopics,primaryLanguage,url,defaultBranchRef,isPrivate"]),
-    ghJson<GitHubIssue[]>(["issue", "list", "--repo", fullName, "--state", "open", "--assignee", "@me", "--limit", "30", "--json", "number,title,url,labels,assignees,updatedAt"]),
+    ghJson<GitHubIssue[]>(["issue", "list", "--repo", fullName, "--state", "open", "--assignee", "@me", "--limit", "30", "--json", "number,title,body,url,labels,assignees,updatedAt"]),
     readGitHubReadme(fullName)
   ]);
 
@@ -265,10 +265,12 @@ async function writeRemoteRepositoryUnderstanding(
   const brief = renderRemoteProjectBrief(repo, view, readme, issues, activeReason);
   const issueMap = renderRemoteIssueMap(repo, issues);
   const areaMap = renderRemoteAreaMap(repo, view, issues);
+  const capabilityMap = renderRemoteCapabilityMap(repo, view, issues);
   const safetyReport = renderRemoteSafetyReport(repo);
 
   await writeFile(path.join(projectDir, "project-brief.md"), brief, "utf8");
   await writeFile(path.join(projectDir, "area-map.md"), areaMap, "utf8");
+  await writeFile(path.join(projectDir, "capability-map.md"), capabilityMap, "utf8");
   await writeFile(path.join(projectDir, "issue-map.md"), issueMap, "utf8");
   await writeJson(path.join(projectDir, "repository-context.json"), {
     repository: repo,
@@ -298,6 +300,7 @@ type GitHubRepoView = {
 type GitHubIssue = {
   number: number;
   title: string;
+  body?: string;
   url?: string;
   updatedAt?: string;
   labels?: Array<{ name?: string }>;
@@ -375,6 +378,10 @@ function renderRemoteIssueMap(repo: RegisteredRepository, issues: GitHubIssue[])
 - labels: ${labels}
 - assignees: ${assignees}
 - updated_at: ${issue.updatedAt ?? ""}
+
+### Body Excerpt
+
+${truncate(issue.body?.trim() || "Issue body is empty.", 1500)}
 `;
       }).join("\n")
     : "自分にassignされたopen Issueはありません。\n";
@@ -410,6 +417,43 @@ ${topicLines}
 - ローカルファイルを読んでいないため、実装area、依存関係、重要ファイルは未確定です。
 - Issue本文とREADMEから計画は作れますが、コード変更範囲の推定にはローカルpath登録かclone探索が必要です。
 `;
+}
+
+function renderRemoteCapabilityMap(repo: RegisteredRepository, view: GitHubRepoView, issues: GitHubIssue[]): string {
+  const issueSignals = new Map<string, GitHubIssue[]>();
+  for (const issue of issues) {
+    for (const signal of collectRemoteIssueSignals(issue)) {
+      issueSignals.set(signal, [...(issueSignals.get(signal) ?? []), issue]);
+    }
+  }
+  const topicSignals = (view.repositoryTopics ?? []).map((topic) => topic.name).filter(Boolean) as string[];
+  const body = [...issueSignals.entries()]
+    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .slice(0, 20)
+    .map(([signal, relatedIssues]) => `## ${signal}
+
+Inferred from assigned open Issues.
+
+### Related Issues
+${relatedIssues.map((issue) => `- #${issue.number} ${issue.title}`).join("\n")}
+`)
+    .join("\n") || "No capability signals were inferred from assigned Issues.\n";
+
+  return `# Remote Capability Map: ${repo.id}
+
+## Repository Topic Signals
+${topicSignals.map((topic) => `- ${topic}`).join("\n") || "- none"}
+
+${body}`;
+}
+
+function collectRemoteIssueSignals(issue: GitHubIssue): string[] {
+  const raw = `${issue.title} ${issue.body ?? ""} ${(issue.labels ?? []).map((label) => label.name).join(" ")}`;
+  return [...new Set(raw
+    .split(/[^A-Za-z0-9_\-\u3040-\u30ff\u3400-\u9fff]+/)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.length >= 3)
+    .slice(0, 40))];
 }
 
 function renderRemoteSafetyReport(repo: RegisteredRepository): string {

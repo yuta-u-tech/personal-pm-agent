@@ -136,6 +136,8 @@ Repository understanding:
 ```sh
 npm run pm-agent -- understand ../study-forge
 npm run pm-agent -- understand ../study-forge --refresh
+npm run pm-agent -- understand ../study-forge --budget cheap
+npm run pm-agent -- understand ../study-forge --budget deep
 npm run pm-agent -- understand-active ../progress-ledger --refresh
 ```
 
@@ -147,7 +149,9 @@ npm run pm-agent -- understand-active ../progress-ledger --refresh
 - `.pm-agent/file-summaries/`
 - `.pm-agent/project/project-brief.md`
 - `.pm-agent/project/area-map.md`
+- `.pm-agent/project/capability-map.md`
 - `.pm-agent/project/capability-map.json`
+- `.pm-agent/project/issue-map.md`
 - `.pm-agent/project/issue-map.json`
 - `.pm-agent/safety/safety-report.md`
 
@@ -157,6 +161,8 @@ What `understand` reads:
 - files not excluded by `.pm-agentignore`
 - head excerpts, imports, exports, symbols, markdown headings, and package metadata
 - selected deep-read files after safety filtering and token budget trimming
+
+`--budget cheap|standard|deep` controls how many files are selected for deep read and how much token budget is used. `standard` is the default. `cheap` keeps the knowledge base smaller for quick setup, while `deep` reads more important files for planning.
 
 `.pm-agentignore` is separate from `.gitignore`. It is created automatically when missing and excludes common secret, dependency, build, generated, and large-file paths such as `.env`, `.env.*`, `*.pem`, `*.key`, `credentials.json`, `service-account*.json`, `secrets/`, `node_modules/`, `dist/`, `build/`, `coverage/`, lock files, maps, database dumps, and archives.
 
@@ -197,6 +203,7 @@ If no local clone is found but `github: owner/name` is registered, it generates 
 
 - `.pm-agent/remote-repositories/<repo-id>/project/project-brief.md`
 - `.pm-agent/remote-repositories/<repo-id>/project/area-map.md`
+- `.pm-agent/remote-repositories/<repo-id>/project/capability-map.md`
 - `.pm-agent/remote-repositories/<repo-id>/project/issue-map.md`
 - `.pm-agent/remote-repositories/<repo-id>/project/repository-context.json`
 - `.pm-agent/remote-repositories/<repo-id>/safety/safety-report.md`

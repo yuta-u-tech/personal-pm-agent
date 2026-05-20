@@ -12,6 +12,7 @@ const execFileAsync = promisify(execFile);
 
 export type UnderstandOptions = {
   refresh?: boolean;
+  budget?: string;
 };
 
 type SensitiveAction = "skip" | "structure-only" | "redact";
@@ -85,6 +86,7 @@ type UnderstandCache = {
 };
 
 type TokenBudget = {
+  mode: UnderstandBudget;
   fileCards: number;
   deepReadFiles: number;
   issues: number;
@@ -105,6 +107,16 @@ type UnderstandStats = {
   selectedDeepReadFiles: number;
   fileSummariesReused: number;
   fileSummariesGenerated: number;
+};
+
+type UnderstandBudget = "cheap" | "standard" | "deep";
+
+type UnderstandLimits = {
+  maxTokensPerCall: number;
+  maxTokensForUnderstand: number;
+  maxDeepReadFiles: number;
+  maxFileBytes: number;
+  headLines: number;
 };
 
 const DEFAULT_IGNORE = `# secrets
@@ -213,7 +225,7 @@ const COMMON_SIGNALS = new Set([
   "common"
 ]);
 
-const LIMITS = {
+const STANDARD_LIMITS: UnderstandLimits = {
   maxTokensPerCall: 12_000,
   maxTokensForUnderstand: 40_000,
   maxDeepReadFiles: 30,
@@ -221,8 +233,34 @@ const LIMITS = {
   headLines: 30
 };
 
+const BUDGET_LIMITS: Record<UnderstandBudget, UnderstandLimits> = {
+  cheap: {
+    maxTokensPerCall: 8_000,
+    maxTokensForUnderstand: 20_000,
+    maxDeepReadFiles: 12,
+    maxFileBytes: 50_000,
+    headLines: 20
+  },
+  standard: STANDARD_LIMITS,
+  deep: {
+    maxTokensPerCall: 16_000,
+    maxTokensForUnderstand: 80_000,
+    maxDeepReadFiles: 60,
+    maxFileBytes: 140_000,
+    headLines: 50
+  }
+};
+
+function parseBudget(value: string | undefined): UnderstandBudget {
+  if (!value) return "standard";
+  if (value === "cheap" || value === "standard" || value === "deep") return value;
+  throw new Error(`Unknown understand budget: ${value}. Expected cheap, standard, or deep.`);
+}
+
 export async function understandCommand(targetDir: string, options: UnderstandOptions = {}): Promise<string> {
   const repoDir = path.resolve(targetDir);
+  const budgetMode = parseBudget(options.budget);
+  const limits = BUDGET_LIMITS[budgetMode];
   const files = await listGitFiles(repoDir);
 
   await writeTextIfMissing(path.join(repoDir, ".pm-agentignore"), DEFAULT_IGNORE);
@@ -276,7 +314,7 @@ export async function understandCommand(targetDir: string, options: UnderstandOp
     }
     const action = sensitive?.action;
     if (action === "skip") continue;
-    cards.push(createFileCard(file, action === "redact" ? redacted.text : content, hash, action));
+    cards.push(createFileCard(file, action === "redact" ? redacted.text : content, hash, action, limits));
     stats.fileCardsGenerated += 1;
   }
 
@@ -285,9 +323,9 @@ export async function understandCommand(targetDir: string, options: UnderstandOp
   const reverseIndex = buildReverseIndex(edges);
   stats.dependencyEdges = edges.length;
   const selected = selectDeepReadCandidates(cards, edges);
-  const { candidates: deepReadCandidates, budget } = applyTokenBudget(cards, selected);
+  const { candidates: deepReadCandidates, budget } = applyTokenBudget(cards, selected, limits, budgetMode);
   stats.selectedDeepReadFiles = deepReadCandidates.length;
-  const summaries = await writeFileSummaries(repoDir, cards, deepReadCandidates, cache, nextCache, stats);
+  const summaries = await writeFileSummaries(repoDir, cards, deepReadCandidates, reverseIndex, cache, nextCache, stats);
   const project = buildProjectUnderstanding(cards, edges, deepReadCandidates);
 
   const payload = JSON.stringify({ cards, edges, reverseIndex, deepReadCandidates, project, summaries });
@@ -311,7 +349,9 @@ export async function understandCommand(targetDir: string, options: UnderstandOp
   await writeJson(path.join(repoDir, ".pm-agent/project/area-map.json"), project.areaMap);
   await writeFile(path.join(repoDir, ".pm-agent/project/area-map.md"), renderAreaMap(project.areaMap), "utf8");
   await writeJson(path.join(repoDir, ".pm-agent/project/capability-map.json"), project.capabilityMap);
+  await writeFile(path.join(repoDir, ".pm-agent/project/capability-map.md"), renderCapabilityMap(project.capabilityMap), "utf8");
   await writeJson(path.join(repoDir, ".pm-agent/project/issue-map.json"), project.issueMap);
+  await writeFile(path.join(repoDir, ".pm-agent/project/issue-map.md"), renderIssueMap(project.issueMap), "utf8");
   await writeJson(path.join(repoDir, ".pm-agent/safety/safety-report.json"), safetyFindings);
   await writeFile(path.join(repoDir, ".pm-agent/safety/safety-report.md"), renderSafetyReport(safetyFindings), "utf8");
   await writeJson(path.join(repoDir, ".pm-agent/cache/understand-cache.json"), nextCache);
@@ -398,26 +438,41 @@ async function resolveSensitiveActions(files: string[]): Promise<Map<string, { r
   });
   console.log("\nHow should pm-agent handle these files?");
   console.log("[Enter] use recommended actions");
+  console.log("[a] ask one by one");
   console.log("[s] skip all");
+  console.log("[o] structure-only all");
   console.log("[r] redact all");
 
   const rl = readline.createInterface({ input, output });
   const answer = (await rl.question("> ")).trim().toLowerCase();
+
+  if (answer === "a") {
+    const decisions = new Map<string, { reason: string; recommendedAction: SensitiveAction; action: SensitiveAction }>();
+    for (const finding of findings) {
+      const decision = await rl.question(`${finding.path} [Enter=${finding.recommendedAction}, s=skip, o=structure-only, r=redact] > `);
+      decisions.set(finding.path, {
+        ...finding,
+        action: parseSensitiveAction(decision.trim().toLowerCase()) ?? finding.recommendedAction
+      });
+    }
+    rl.close();
+    return decisions;
+  }
+
   rl.close();
 
-  const action = answer === "s" ? "skip" : answer === "r" ? "redact" : null;
-  return new Map(
-    findings.map((finding) => [
-      finding.path,
-      {
-        ...finding,
-        action: action ?? finding.recommendedAction
-      }
-    ])
-  );
+  const action = answer === "s" ? "skip" : answer === "o" ? "structure-only" : answer === "r" ? "redact" : null;
+  return new Map(findings.map((finding) => [finding.path, { ...finding, action: action ?? finding.recommendedAction }]));
 }
 
-function createFileCard(filePath: string, content: string, hash: string, sensitiveAction?: SensitiveAction): FileCard {
+function parseSensitiveAction(value: string): SensitiveAction | null {
+  if (value === "s" || value === "skip") return "skip";
+  if (value === "o" || value === "structure-only") return "structure-only";
+  if (value === "r" || value === "redact") return "redact";
+  return null;
+}
+
+function createFileCard(filePath: string, content: string, hash: string, sensitiveAction: SensitiveAction | undefined, limits: UnderstandLimits): FileCard {
   const extension = path.extname(filePath);
   const language = languageFor(filePath);
   const lines = content.split(/\r?\n/);
@@ -439,7 +494,7 @@ function createFileCard(filePath: string, content: string, hash: string, sensiti
     language,
     size: Buffer.byteLength(content, "utf8"),
     lineCount: lines.length,
-    headExcerpt: contentIncluded ? lines.slice(0, LIMITS.headLines).join("\n") : undefined,
+    headExcerpt: contentIncluded ? lines.slice(0, limits.headLines).join("\n") : undefined,
     imports,
     exports,
     symbols,
@@ -745,42 +800,48 @@ function selectDeepReadCandidates(cards: FileCard[], edges: DependencyEdge[]): D
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
 }
 
-function applyTokenBudget(cards: FileCard[], selected: DeepReadCandidate[]): { candidates: DeepReadCandidate[]; budget: TokenBudget } {
+function applyTokenBudget(
+  cards: FileCard[],
+  selected: DeepReadCandidate[],
+  limits: UnderstandLimits,
+  mode: UnderstandBudget
+): { candidates: DeepReadCandidate[]; budget: TokenBudget } {
   const cardTokens = estimateTokens(JSON.stringify(cards.map((card) => ({ ...card, headExcerpt: undefined }))));
   const summariesTokens = Math.round(selected.length * 180);
   const issuesTokens = 0;
-  let candidates = selected.slice(0, LIMITS.maxDeepReadFiles);
-  let deepReadTokens = estimateDeepReadTokens(cards, candidates);
+  let candidates = selected.slice(0, limits.maxDeepReadFiles);
+  let deepReadTokens = estimateDeepReadTokens(cards, candidates, limits);
   let total = cardTokens + deepReadTokens + summariesTokens + issuesTokens;
   let trimmed = 0;
 
-  while (total > LIMITS.maxTokensForUnderstand && candidates.length > 0) {
+  while (total > limits.maxTokensForUnderstand && candidates.length > 0) {
     candidates = candidates.slice(0, -1);
     trimmed += 1;
-    deepReadTokens = estimateDeepReadTokens(cards, candidates);
+    deepReadTokens = estimateDeepReadTokens(cards, candidates, limits);
     total = cardTokens + deepReadTokens + Math.round(candidates.length * 180) + issuesTokens;
   }
 
   return {
     candidates,
     budget: {
+      mode,
       fileCards: cardTokens,
       deepReadFiles: deepReadTokens,
       issues: issuesTokens,
       summaries: Math.round(candidates.length * 180),
       total,
-      limit: LIMITS.maxTokensForUnderstand,
+      limit: limits.maxTokensForUnderstand,
       trimmedDeepReadFiles: trimmed
     }
   };
 }
 
-function estimateDeepReadTokens(cards: FileCard[], candidates: DeepReadCandidate[]): number {
+function estimateDeepReadTokens(cards: FileCard[], candidates: DeepReadCandidate[], limits: UnderstandLimits): number {
   const byPath = new Map(cards.map((card) => [card.path, card]));
   return candidates.reduce((sum, candidate) => {
     const card = byPath.get(candidate.path);
     if (!card) return sum;
-    return sum + Math.min(Math.ceil(card.size / 4), LIMITS.maxTokensPerCall);
+    return sum + Math.min(Math.ceil(Math.min(card.size, limits.maxFileBytes) / 4), limits.maxTokensPerCall);
   }, 0);
 }
 
@@ -788,6 +849,7 @@ async function writeFileSummaries(
   repoDir: string,
   cards: FileCard[],
   candidates: DeepReadCandidate[],
+  reverseIndex: Record<string, Array<{ importedBy: string; symbols: string[] }>>,
   cache: UnderstandCache,
   nextCache: UnderstandCache,
   stats: UnderstandStats
@@ -804,7 +866,7 @@ async function writeFileSummaries(
       summaries.push({ path: candidate.path, summaryPath });
       continue;
     }
-    const summary = renderFileSummary(card, candidate);
+    const summary = renderFileSummary(card, candidate, reverseIndex[card.path] ?? []);
     await mkdir(path.dirname(summaryPath), { recursive: true });
     await writeFile(summaryPath, summary, "utf8");
     stats.fileSummariesGenerated += 1;
@@ -817,6 +879,7 @@ function buildProjectUnderstanding(cards: FileCard[], edges: DependencyEdge[], c
   const packageCard = cards.find((card) => card.path === "package.json");
   const areas = buildAreas(cards);
   const capabilities = buildCapabilities(cards);
+  const planningSignals = inferPlanningSignals(cards, candidates);
   const brief = {
     purpose: inferPurpose(cards),
     techStack: inferTechStack(cards),
@@ -843,7 +906,14 @@ function buildProjectUnderstanding(cards: FileCard[], edges: DependencyEdge[], c
     capabilityMap: capabilities,
     issueMap: {
       issues: [],
-      note: "Issue-specific mapping is reserved for pm-agent understand --issue."
+      planningSignals,
+      suggestedIssueWorkflow: [
+        "Match issue title/body terms against planningSignals and capability names.",
+        "Start with files from matching capabilities and important area files.",
+        "Check reverse dependencies before splitting implementation tasks.",
+        "Create separate tasks for implementation, tests, docs, and review handoff."
+      ],
+      note: "No specific issue was provided. Run future understand --issue <number> for issue-specific mapping."
     },
     dependencySummary: {
       files: cards.length,
@@ -862,7 +932,9 @@ function buildAreas(cards: FileCard[]) {
     areas: [...groups.entries()].map(([name, files]) => ({
       name,
       purpose: inferAreaPurpose(name),
-      importantFiles: files.slice(0, 12).map((file) => file.path),
+      fileCount: files.length,
+      importantFiles: rankFilesForPlanning(files).slice(0, 12).map((file) => file.path),
+      responsibilities: [...new Set(files.flatMap((file) => file.responsibilities ?? []))].slice(0, 10),
       relatedCapabilities: [...new Set(files.flatMap((file) => file.signals))].slice(0, 12),
       relatedIssues: [],
       risks: [
@@ -873,6 +945,24 @@ function buildAreas(cards: FileCard[]) {
       ]
     }))
   };
+}
+
+function rankFilesForPlanning(files: FileCard[]): FileCard[] {
+  return [...files].sort((a, b) => planningFileScore(b) - planningFileScore(a) || a.path.localeCompare(b.path));
+}
+
+function planningFileScore(card: FileCard): number {
+  let score = 0;
+  if (/README\.md$/i.test(card.path)) score += 20;
+  if (/package\.json$|tsconfig\.json$|Dockerfile$/.test(card.path)) score += 16;
+  if (/^(index|study)\.html$|^(app|home|main|server|service-worker)\.js$|^src\/(main|server|index)\./.test(card.path)) score += 14;
+  if (/src\/(lib|services|domain|usecases)\//.test(card.path)) score += 12;
+  if (/src\/(components|pages|controllers|handlers)\//.test(card.path)) score += 8;
+  score += Math.min((card.responsibilities?.length ?? 0) * 3, 12);
+  score += Math.min(card.symbols.length, 8);
+  if (card.sensitive) score -= 30;
+  if (card.size > 80_000) score -= 10;
+  return score;
 }
 
 function inferAreaPurpose(area: string): string {
@@ -904,16 +994,42 @@ function buildCapabilities(cards: FileCard[]) {
       .slice(0, 30)
       .map(([name, files]) => ({
         name,
-        description: `Capability inferred from repeated signal: ${name}`,
+        description: describeCapability(name, [...files]),
         areas: [...new Set([...files].map(inferArea))],
         files: [...files].slice(0, 20),
         relatedIssues: [],
-        risks: []
+        risks: [...new Set([...files].flatMap((file) => cards.find((card) => card.path === file)?.risks ?? []))].slice(0, 8)
       }))
   };
 }
 
-function renderFileSummary(card: FileCard, candidate: DeepReadCandidate): string {
+function describeCapability(name: string, files: string[]): string {
+  const areaNames = [...new Set(files.map(inferArea))].join(", ");
+  return `Inferred from repeated signal "${name}" across ${files.length} files${areaNames ? ` in ${areaNames}` : ""}.`;
+}
+
+function inferPlanningSignals(cards: FileCard[], candidates: DeepReadCandidate[]): Array<{ signal: string; files: string[]; areas: string[]; candidateFiles: string[] }> {
+  const candidatePaths = new Set(candidates.map((candidate) => candidate.path));
+  const signals = new Map<string, Set<string>>();
+  for (const card of cards) {
+    for (const signal of card.signals.slice(0, 12)) {
+      if (signal.length < 3 || COMMON_SIGNALS.has(signal)) continue;
+      signals.set(signal, (signals.get(signal) ?? new Set()).add(card.path));
+    }
+  }
+  return [...signals.entries()]
+    .filter(([, files]) => files.size > 1)
+    .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))
+    .slice(0, 40)
+    .map(([signal, files]) => ({
+      signal,
+      files: [...files].slice(0, 12),
+      areas: [...new Set([...files].map(inferArea))],
+      candidateFiles: [...files].filter((file) => candidatePaths.has(file)).slice(0, 8)
+    }));
+}
+
+function renderFileSummary(card: FileCard, candidate: DeepReadCandidate, importedBy: Array<{ importedBy: string; symbols: string[] }>): string {
   return `# File Summary: ${card.path}
 
 ## Role
@@ -928,8 +1044,14 @@ ${[
 ## Dependencies
 ${card.imports.map((item) => `- ${item}`).join("\n") || "- No imports detected."}
 
+## Imported By
+${importedBy.slice(0, 12).map((item) => `- ${item.importedBy}`).join("\n") || "- No tracked reverse dependencies detected."}
+
 ## Related Capabilities
 ${card.signals.slice(0, 12).map((signal) => `- ${signal}`).join("\n") || "- No signals detected."}
+
+## Change Guidance
+${renderChangeGuidance(card, importedBy)}
 
 ## Selection Reasons
 ${candidate.reasons.map((reason) => `- ${reason}`).join("\n")}
@@ -940,6 +1062,16 @@ ${[
   ...(card.sensitive ? ["Sensitive file handling required."] : [])
 ].map((risk) => `- ${risk}`).join("\n") || "- No obvious risk inferred by the analyzer."}
 `;
+}
+
+function renderChangeGuidance(card: FileCard, importedBy: Array<{ importedBy: string; symbols: string[] }>): string {
+  const guidance = [
+    importedBy.length > 0 ? `Check ${Math.min(importedBy.length, 12)} reverse dependenc${importedBy.length === 1 ? "y" : "ies"} before changing exported behavior.` : "",
+    card.tests?.length ? "Update or run the related tests named in this file." : "",
+    card.risks?.length ? "Treat this file as a risk-bearing change surface." : "",
+    card.sensitive ? "Do not include raw values from this file in model prompts or reports." : ""
+  ].filter(Boolean);
+  return guidance.map((item) => `- ${item}`).join("\n") || "- Review the file role, imports, and related capabilities before planning changes.";
 }
 
 function renderProjectBrief(brief: Record<string, unknown>): string {
@@ -978,7 +1110,7 @@ ${list(brief.usefulCommands)}
 `;
 }
 
-function renderAreaMap(areaMap: { areas: Array<{ name: string; purpose: string; importantFiles: string[]; relatedCapabilities: string[]; risks: string[] }> }): string {
+function renderAreaMap(areaMap: { areas: Array<{ name: string; purpose: string; fileCount?: number; importantFiles: string[]; responsibilities?: string[]; relatedCapabilities: string[]; risks: string[] }> }): string {
   return `# Area Map
 
 ${areaMap.areas
@@ -987,8 +1119,13 @@ ${areaMap.areas
 
 ${area.purpose}
 
+Files: ${area.fileCount ?? area.importantFiles.length}
+
 ### Important Files
 ${area.importantFiles.map((file) => `- ${file}`).join("\n") || "- none"}
+
+### Responsibilities
+${(area.responsibilities ?? []).map((responsibility) => `- ${responsibility}`).join("\n") || "- none inferred"}
 
 ### Related Capabilities
 ${area.relatedCapabilities.map((capability) => `- ${capability}`).join("\n") || "- none"}
@@ -997,6 +1134,62 @@ ${area.relatedCapabilities.map((capability) => `- ${capability}`).join("\n") || 
 ${area.risks.map((risk) => `- ${risk}`).join("\n") || "- none"}`
   )
   .join("\n\n")}
+`;
+}
+
+function renderCapabilityMap(capabilityMap: { capabilities: Array<{ name: string; description: string; areas: string[]; files: string[]; relatedIssues: unknown[]; risks: string[] }> }): string {
+  return `# Capability Map
+
+${capabilityMap.capabilities.length > 0
+  ? capabilityMap.capabilities
+      .map(
+        (capability) => `## ${capability.name}
+
+${capability.description}
+
+### Areas
+${capability.areas.map((area) => `- ${area}`).join("\n") || "- none"}
+
+### Files
+${capability.files.map((file) => `- ${file}`).join("\n") || "- none"}
+
+### Risks
+${capability.risks.map((risk) => `- ${risk}`).join("\n") || "- none"}`
+      )
+      .join("\n\n")
+  : "No repeated capability signals were detected.\n"}
+`;
+}
+
+function renderIssueMap(issueMap: {
+  planningSignals?: Array<{ signal: string; files: string[]; areas: string[]; candidateFiles: string[] }>;
+  suggestedIssueWorkflow?: string[];
+  note?: string;
+}): string {
+  const signals = issueMap.planningSignals ?? [];
+  return `# Issue Map
+
+${issueMap.note ?? ""}
+
+## Suggested Issue Workflow
+${(issueMap.suggestedIssueWorkflow ?? []).map((item) => `- ${item}`).join("\n") || "- Match Issue text against file and capability signals."}
+
+## Planning Signals
+${signals.length > 0
+  ? signals
+      .map(
+        (signal) => `### ${signal.signal}
+
+Areas: ${signal.areas.join(", ") || "none"}
+
+Candidate files:
+${signal.candidateFiles.map((file) => `- ${file}`).join("\n") || "- none selected for deep read"}
+
+Related files:
+${signal.files.map((file) => `- ${file}`).join("\n")}`
+      )
+      .join("\n\n")
+  : "No planning signals were detected.\n"}
 `;
 }
 
@@ -1227,7 +1420,7 @@ function safeFileName(filePath: string): string {
 
 function renderUnderstandLog(repoDir: string, stats: UnderstandStats, budget: TokenBudget, safetyFindings: number): string {
   const budgetAdvice = budget.trimmedDeepReadFiles > 0
-    ? `\nToken budget exceeded initial selection. Trimmed deep-read files: ${budget.trimmedDeepReadFiles}. Use --deep when implemented for broader reading.`
+    ? `\nToken budget exceeded initial selection. Trimmed deep-read files: ${budget.trimmedDeepReadFiles}. Use --budget deep for broader reading.`
     : "";
   return `Analyzing repository...
 
@@ -1249,6 +1442,7 @@ function renderUnderstandLog(repoDir: string, stats: UnderstandStats, budget: To
 ✓ safety report generated
 
 Token Budget:
+- Mode: ${budget.mode}
 - File cards: ${budget.fileCards.toLocaleString()}
 - Deep read files: ${budget.deepReadFiles.toLocaleString()}
 - Issues: ${budget.issues.toLocaleString()}
@@ -1261,7 +1455,9 @@ ${path.join(repoDir, ".pm-agent/graph/dependency-graph.json")}
 ${path.join(repoDir, ".pm-agent/graph/reverse-dependency-index.json")}
 ${path.join(repoDir, ".pm-agent/project/project-brief.md")}
 ${path.join(repoDir, ".pm-agent/project/area-map.md")}
+${path.join(repoDir, ".pm-agent/project/capability-map.md")}
 ${path.join(repoDir, ".pm-agent/project/capability-map.json")}
+${path.join(repoDir, ".pm-agent/project/issue-map.md")}
 ${path.join(repoDir, ".pm-agent/project/issue-map.json")}
 ${path.join(repoDir, ".pm-agent/safety/safety-report.md")}
 

@@ -43,6 +43,8 @@ type DashboardRepository = {
   understanding?: {
     projectBrief: string;
     areaMap: string;
+    capabilityMap?: string;
+    issueMap?: string;
     safetyReport: string;
   };
 };
@@ -179,6 +181,8 @@ async function readRepositoryUnderstanding(repoDir: string): Promise<DashboardRe
   return {
     projectBrief: await readText(path.join(repoDir, ".pm-agent/project/project-brief.md")),
     areaMap: await readText(path.join(repoDir, ".pm-agent/project/area-map.md")),
+    capabilityMap: await readText(path.join(repoDir, ".pm-agent/project/capability-map.md")),
+    issueMap: await readText(path.join(repoDir, ".pm-agent/project/issue-map.md")),
     safetyReport: await readText(path.join(repoDir, ".pm-agent/safety/safety-report.md"))
   };
 }
@@ -187,6 +191,8 @@ async function readRemoteRepositoryUnderstanding(repoDir: string): Promise<Dashb
   return {
     projectBrief: await readText(path.join(repoDir, "project/project-brief.md")),
     areaMap: await readText(path.join(repoDir, "project/area-map.md")),
+    capabilityMap: await readText(path.join(repoDir, "project/capability-map.md")),
+    issueMap: await readText(path.join(repoDir, "project/issue-map.md")),
     safetyReport: await readText(path.join(repoDir, "safety/safety-report.md"))
   };
 }
@@ -686,13 +692,15 @@ function renderDashboardHtml(): string {
 
     function understandingBlock(repo) {
       const understanding = repo.understanding || {};
-      const hasUnderstanding = Boolean((understanding.projectBrief || "").trim() || (understanding.areaMap || "").trim() || (understanding.safetyReport || "").trim());
+      const hasUnderstanding = Boolean((understanding.projectBrief || "").trim() || (understanding.areaMap || "").trim() || (understanding.capabilityMap || "").trim() || (understanding.issueMap || "").trim() || (understanding.safetyReport || "").trim());
       if (!hasUnderstanding) {
         return '<div class="empty">No understand output yet. Run pm-agent understand for this repository, then refresh the dashboard.</div>';
       }
       return '<div class="grid">' +
         '<div class="block"><div class="block-head"><h3>Project Brief</h3><button class="copy-button" type="button" data-copy-understand="projectBrief">Copy</button></div>' + markdownBlock(understanding.projectBrief, "No project brief.") + '</div>' +
         '<div class="block"><div class="block-head"><h3>Area Map</h3><button class="copy-button" type="button" data-copy-understand="areaMap">Copy</button></div>' + markdownBlock(understanding.areaMap, "No area map.") + '</div>' +
+        '<div class="block"><div class="block-head"><h3>Capability Map</h3><button class="copy-button" type="button" data-copy-understand="capabilityMap">Copy</button></div>' + markdownBlock(understanding.capabilityMap, "No capability map.") + '</div>' +
+        '<div class="block"><div class="block-head"><h3>Issue Map</h3><button class="copy-button" type="button" data-copy-understand="issueMap">Copy</button></div>' + markdownBlock(understanding.issueMap, "No issue map.") + '</div>' +
         '<div class="block"><div class="block-head"><h3>Safety Report</h3><button class="copy-button" type="button" data-copy-understand="safetyReport">Copy</button></div>' + markdownBlock(understanding.safetyReport, "No safety report.") + '</div>' +
         '</div>';
     }

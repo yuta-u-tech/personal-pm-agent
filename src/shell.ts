@@ -52,7 +52,7 @@ async function runShellCommand(targetDir: string, line: string): Promise<string>
   }
   if (command === "/understand") {
     const repoDir = args.find((arg) => !arg.startsWith("--")) ?? process.cwd();
-    const result = await understandCommand(repoDir, { refresh: args.includes("--refresh") });
+    const result = await understandCommand(repoDir, { refresh: args.includes("--refresh"), budget: parseOption(args, "--budget") });
     return `${result}\n\nNext:\n- Review .pm-agent/project/project-brief.md in that repository.\n- Review .pm-agent/project/area-map.md for planning by area.\n- Review .pm-agent/safety/safety-report.md before using summaries for LLM planning.`;
   }
   if (command === "/understand-active") {
