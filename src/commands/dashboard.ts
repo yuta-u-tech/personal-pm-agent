@@ -1,5 +1,6 @@
 import http from "node:http";
 import path from "node:path";
+import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { today } from "../core/date.js";
@@ -46,6 +47,10 @@ type DashboardRepository = {
     capabilityMap?: string;
     issueMap?: string;
     safetyReport: string;
+    llmProjectBrief?: string;
+    llmAreaMap?: string;
+    llmCapabilityMap?: string;
+    llmPlanningNotes?: string;
   };
 };
 
@@ -172,7 +177,10 @@ async function buildDashboardRepositories(targetDir: string, repositoryLinks: st
 function resolveRepositoryLocalPath(targetDir: string, repo: Record<string, string>): string | undefined {
   const candidates = [
     repo.path ? expandHome(repo.path) : "",
-    path.join(path.dirname(targetDir), repo.id)
+    path.join(path.dirname(targetDir), repo.id),
+    path.join(homedir(), repo.id),
+    path.join(homedir(), "work", repo.id),
+    path.join(homedir(), "Desktop", repo.id)
   ].filter(Boolean);
   return candidates.find((candidate) => existsSync(path.join(candidate, ".git"))) ?? candidates.find((candidate) => existsSync(path.join(candidate, ".pm-agent")));
 }
@@ -183,7 +191,11 @@ async function readRepositoryUnderstanding(repoDir: string): Promise<DashboardRe
     areaMap: await readText(path.join(repoDir, ".pm-agent/project/area-map.md")),
     capabilityMap: await readText(path.join(repoDir, ".pm-agent/project/capability-map.md")),
     issueMap: await readText(path.join(repoDir, ".pm-agent/project/issue-map.md")),
-    safetyReport: await readText(path.join(repoDir, ".pm-agent/safety/safety-report.md"))
+    safetyReport: await readText(path.join(repoDir, ".pm-agent/safety/safety-report.md")),
+    llmProjectBrief: await readText(path.join(repoDir, ".pm-agent/llm/project-brief.md")),
+    llmAreaMap: await readText(path.join(repoDir, ".pm-agent/llm/area-map.md")),
+    llmCapabilityMap: await readText(path.join(repoDir, ".pm-agent/llm/capability-map.md")),
+    llmPlanningNotes: await readText(path.join(repoDir, ".pm-agent/llm/planning-notes.md"))
   };
 }
 
@@ -193,7 +205,11 @@ async function readRemoteRepositoryUnderstanding(repoDir: string): Promise<Dashb
     areaMap: await readText(path.join(repoDir, "project/area-map.md")),
     capabilityMap: await readText(path.join(repoDir, "project/capability-map.md")),
     issueMap: await readText(path.join(repoDir, "project/issue-map.md")),
-    safetyReport: await readText(path.join(repoDir, "safety/safety-report.md"))
+    safetyReport: await readText(path.join(repoDir, "safety/safety-report.md")),
+    llmProjectBrief: await readText(path.join(repoDir, "llm/project-brief.md")),
+    llmAreaMap: await readText(path.join(repoDir, "llm/area-map.md")),
+    llmCapabilityMap: await readText(path.join(repoDir, "llm/capability-map.md")),
+    llmPlanningNotes: await readText(path.join(repoDir, "llm/planning-notes.md"))
   };
 }
 
@@ -692,11 +708,15 @@ function renderDashboardHtml(): string {
 
     function understandingBlock(repo) {
       const understanding = repo.understanding || {};
-      const hasUnderstanding = Boolean((understanding.projectBrief || "").trim() || (understanding.areaMap || "").trim() || (understanding.capabilityMap || "").trim() || (understanding.issueMap || "").trim() || (understanding.safetyReport || "").trim());
+      const hasUnderstanding = Boolean((understanding.projectBrief || "").trim() || (understanding.areaMap || "").trim() || (understanding.capabilityMap || "").trim() || (understanding.issueMap || "").trim() || (understanding.safetyReport || "").trim() || (understanding.llmProjectBrief || "").trim() || (understanding.llmPlanningNotes || "").trim());
       if (!hasUnderstanding) {
         return '<div class="empty">No understand output yet. Run pm-agent understand for this repository, then refresh the dashboard.</div>';
       }
       return '<div class="grid">' +
+        '<div class="block"><div class="block-head"><h3>LLM Project Brief</h3><button class="copy-button" type="button" data-copy-understand="llmProjectBrief">Copy</button></div>' + markdownBlock(understanding.llmProjectBrief, "No LLM project brief. Run understand with --llm.") + '</div>' +
+        '<div class="block"><div class="block-head"><h3>LLM Planning Notes</h3><button class="copy-button" type="button" data-copy-understand="llmPlanningNotes">Copy</button></div>' + markdownBlock(understanding.llmPlanningNotes, "No LLM planning notes. Run understand with --llm.") + '</div>' +
+        '<div class="block"><div class="block-head"><h3>LLM Area Map</h3><button class="copy-button" type="button" data-copy-understand="llmAreaMap">Copy</button></div>' + markdownBlock(understanding.llmAreaMap, "No LLM area map. Run understand with --llm.") + '</div>' +
+        '<div class="block"><div class="block-head"><h3>LLM Capability Map</h3><button class="copy-button" type="button" data-copy-understand="llmCapabilityMap">Copy</button></div>' + markdownBlock(understanding.llmCapabilityMap, "No LLM capability map. Run understand with --llm.") + '</div>' +
         '<div class="block"><div class="block-head"><h3>Project Brief</h3><button class="copy-button" type="button" data-copy-understand="projectBrief">Copy</button></div>' + markdownBlock(understanding.projectBrief, "No project brief.") + '</div>' +
         '<div class="block"><div class="block-head"><h3>Area Map</h3><button class="copy-button" type="button" data-copy-understand="areaMap">Copy</button></div>' + markdownBlock(understanding.areaMap, "No area map.") + '</div>' +
         '<div class="block"><div class="block-head"><h3>Capability Map</h3><button class="copy-button" type="button" data-copy-understand="capabilityMap">Copy</button></div>' + markdownBlock(understanding.capabilityMap, "No capability map.") + '</div>' +
