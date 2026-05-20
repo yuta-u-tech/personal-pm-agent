@@ -452,6 +452,57 @@ function renderDashboardHtml(): string {
       font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
+    .markdown {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+
+    .markdown h1,
+    .markdown h2,
+    .markdown h3,
+    .markdown h4 {
+      margin: 16px 0 8px;
+      line-height: 1.3;
+    }
+
+    .markdown h1 {
+      font-size: 18px;
+    }
+
+    .markdown h2 {
+      font-size: 16px;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    .markdown h3 {
+      font-size: 14px;
+    }
+
+    .markdown p {
+      margin: 8px 0;
+    }
+
+    .markdown ul,
+    .markdown ol {
+      margin: 8px 0 8px 20px;
+      padding: 0;
+    }
+
+    .markdown li {
+      margin: 4px 0;
+    }
+
+    .markdown code {
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #f4f6f8;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+
     .empty {
       color: var(--muted);
       border: 1px dashed var(--line);
@@ -661,7 +712,94 @@ function renderDashboardHtml(): string {
 
     function markdownBlock(text, emptyText = "No content.") {
       if (!text || !text.trim()) return '<div class="empty">' + escapeHtml(emptyText) + '</div>';
-      return '<pre>' + escapeHtml(text) + '</pre>';
+      return '<div class="markdown">' + renderMarkdown(text) + '</div>';
+    }
+
+    function renderMarkdown(text) {
+      const lines = text.split(/\\r?\\n/);
+      const html = [];
+      let listType = null;
+      let paragraph = [];
+      let inFence = false;
+      let fence = [];
+
+      function flushParagraph() {
+        if (paragraph.length) {
+          html.push('<p>' + inlineMarkdown(paragraph.join(' ')) + '</p>');
+          paragraph = [];
+        }
+      }
+      function closeList() {
+        if (listType) {
+          html.push('</' + listType + '>');
+          listType = null;
+        }
+      }
+
+      for (const rawLine of lines) {
+        const line = rawLine.trimEnd();
+        if (line.startsWith(String.fromCharCode(96, 96, 96))) {
+          if (inFence) {
+            html.push('<pre>' + escapeHtml(fence.join('\\n')) + '</pre>');
+            fence = [];
+            inFence = false;
+          } else {
+            flushParagraph();
+            closeList();
+            inFence = true;
+          }
+          continue;
+        }
+        if (inFence) {
+          fence.push(line);
+          continue;
+        }
+        if (!line.trim()) {
+          flushParagraph();
+          closeList();
+          continue;
+        }
+        const heading = line.match(/^(#{1,4})\\s+(.+)$/);
+        if (heading) {
+          flushParagraph();
+          closeList();
+          const level = heading[1].length;
+          html.push('<h' + level + '>' + inlineMarkdown(heading[2]) + '</h' + level + '>');
+          continue;
+        }
+        const bullet = line.match(/^-\\s+(.+)$/);
+        if (bullet) {
+          flushParagraph();
+          if (listType !== 'ul') {
+            closeList();
+            html.push('<ul>');
+            listType = 'ul';
+          }
+          html.push('<li>' + inlineMarkdown(bullet[1]) + '</li>');
+          continue;
+        }
+        const numbered = line.match(/^\\d+\\.\\s+(.+)$/);
+        if (numbered) {
+          flushParagraph();
+          if (listType !== 'ol') {
+            closeList();
+            html.push('<ol>');
+            listType = 'ol';
+          }
+          html.push('<li>' + inlineMarkdown(numbered[1]) + '</li>');
+          continue;
+        }
+        closeList();
+        paragraph.push(line.trim());
+      }
+      flushParagraph();
+      closeList();
+      if (inFence && fence.length) html.push('<pre>' + escapeHtml(fence.join('\\n')) + '</pre>');
+      return html.join('');
+    }
+
+    function inlineMarkdown(text) {
+      return escapeHtml(text);
     }
 
     function filesBlock(files) {

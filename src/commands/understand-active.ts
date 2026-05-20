@@ -593,10 +593,36 @@ function remoteLlmSchema(): object {
 function renderRemoteLlmSection(title: string, value: unknown): string {
   return `# ${title}
 
-\`\`\`json
-${JSON.stringify(value, null, 2)}
-\`\`\`
+${renderStructuredMarkdown(value)}
 `;
+}
+
+function renderStructuredMarkdown(value: unknown, depth = 2): string {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "- none";
+    if (value.every((item) => typeof item !== "object" || item === null)) {
+      return value.map((item) => `- ${String(item)}`).join("\n");
+    }
+    return value.map((item, index) => renderStructuredMarkdown(item, depth + 1).replace(/^/, `### Item ${index + 1}\n\n`)).join("\n\n");
+  }
+
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, child]) => {
+        const heading = `${"#".repeat(Math.min(depth, 4))} ${humanizeKey(key)}`;
+        return `${heading}\n\n${renderStructuredMarkdown(child, depth + 1)}`;
+      })
+      .join("\n\n");
+  }
+
+  return value === undefined || value === null || value === "" ? "- none" : String(value);
+}
+
+function humanizeKey(key: string): string {
+  return key
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function redactRemotePrompt(prompt: string): string {
