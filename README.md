@@ -234,7 +234,7 @@ If `/activate-repo <repo-id>` is not already in `links/repositories.md`, pm-agen
 
 - `path:` in `links/repositories.md`
 - a sibling directory of the ledger with the same repo id
-- directories under `PM_AGENT_REPO_ROOTS`, the ledger parent, `~/work`, and the current working directory
+- directories under `PM_AGENT_REPO_ROOTS`, the ledger parent, `~`, `~/work`, and the current working directory
 
 If no local clone is found but `github: owner/name` is registered, it generates a lightweight GitHub remote context instead:
 
@@ -246,6 +246,7 @@ If no local clone is found but `github: owner/name` is registered, it generates 
 - `.pm-agent/remote-repositories/<repo-id>/safety/safety-report.md`
 
 Remote context uses GitHub repository metadata, README, and open Issues assigned to you. It does not read local files, so file cards, dependency graphs, and deep implementation summaries are only available when a local clone is found.
+When `--llm --adapter background-agent` is passed, remote context is also sent to the configured background agent and writes additional summaries under `.pm-agent/remote-repositories/<repo-id>/llm/`.
 
 The default adapter is `mock`, so the MVP flow can be tested without an API contract.
 To use a background terminal agent, configure `pm-agent.config.json` in the ledger and run:

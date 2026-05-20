@@ -4,9 +4,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
+import { loadConfig, type PmAgentConfig } from "../core/config.js";
 import { expandHome } from "../core/git.js";
 import { ensureDir, writeJson } from "../core/fs.js";
 import { parseRepositoryLinks } from "../core/markdown.js";
+import { createAdapter } from "../model/index.js";
 import { readExplicitActiveRepositoryIds } from "./repository.js";
 import { understandCommand } from "./understand.js";
 
@@ -61,8 +63,11 @@ export async function understandActiveCommand(ledgerDir: string, options: Unders
     if (!repoPath && repo.github) {
       try {
         const outputDir = await writeRemoteRepositoryUnderstanding(ledgerDir, repo, active.reason);
+        if (options.llm) {
+          await writeRemoteLlmUnderstanding(ledgerDir, repo);
+        }
         remoteCompleted += 1;
-        results.push(`◇ ${repoId}\n  mode: GitHub remote context\n  output: ${outputDir}\n  active reason: ${active.reason}`);
+        results.push(`◇ ${repoId}\n  mode: GitHub remote context${options.llm ? " + LLM" : ""}\n  output: ${outputDir}\n  active reason: ${active.reason}`);
       } catch (error) {
         failed += 1;
         results.push(`✗ ${repoId} remote context failed\n  reason: ${error instanceof Error ? error.message : String(error)}\n  active reason: ${active.reason}`);
@@ -193,6 +198,7 @@ async function findExistingClone(ledgerDir: string, repo: RegisteredRepository):
   const roots = unique([
     ...splitSearchRoots(process.env.PM_AGENT_REPO_ROOTS),
     path.dirname(ledgerDir),
+    homedir(),
     path.join(homedir(), "work"),
     process.cwd()
   ]).filter((root) => existsSync(root));
@@ -239,7 +245,7 @@ async function searchCloneByName(root: string, names: string[], maxDepth: number
 }
 
 function shouldSkipDirectory(name: string): boolean {
-  return name === "node_modules" || name === ".git" || name === "Library" || name.startsWith(".");
+  return name === "node_modules" || name === ".git" || name === "Library" || name === "Applications" || name === "Movies" || name === "Music" || name === "Pictures" || name.startsWith(".");
 }
 
 async function repositoryRemoteMatches(repoPath: string, fullName: string): Promise<boolean> {
@@ -487,6 +493,121 @@ function renderRemoteSafetyReport(repo: RegisteredRepository): string {
 ローカルファイルは読んでいないため、secret scan / dependency graph / file card生成は実行していません。
 ユーザーの許可はスキャン対象に含めるための許可であり、secretをLLMへそのまま送る許可ではありません。
 `;
+}
+
+async function writeRemoteLlmUnderstanding(ledgerDir: string, repo: RegisteredRepository): Promise<void> {
+  const baseDir = path.join(ledgerDir, ".pm-agent", "remote-repositories", repo.id);
+  const llmDir = path.join(baseDir, "llm");
+  await ensureDir(llmDir);
+
+  const outputPath = path.join(llmDir, "remote-understand-llm.json");
+  const schemaPath = path.join(llmDir, "remote-understand-llm.schema.json");
+  const promptPath = path.join(llmDir, "remote-understand-input.md");
+  const prompt = redactRemotePrompt(buildRemoteLlmPrompt(baseDir, outputPath));
+
+  await writeJson(schemaPath, remoteLlmSchema());
+  await writeFile(promptPath, prompt, "utf8");
+
+  const config = await loadConfig(ledgerDir);
+  const adapterName = config.model?.defaultAdapter === "mock" ? "background-agent" : config.model?.defaultAdapter ?? "background-agent";
+  const adapter = createAdapter(configForRemoteOutput(config, adapterName, ledgerDir, outputPath), adapterName);
+  await adapter.generate({
+    date: "understand",
+    ledgerDir,
+    contextPackPath: path.join(baseDir, "project/repository-context.json"),
+    schemaPath,
+    outputPath,
+    prompt,
+    timeoutMs: 600_000
+  });
+
+  const parsed = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
+  await writeFile(path.join(llmDir, "project-brief.md"), renderRemoteLlmSection("Remote LLM Project Brief", parsed.projectBrief), "utf8");
+  await writeFile(path.join(llmDir, "capability-map.md"), renderRemoteLlmSection("Remote LLM Capability Map", parsed.capabilityMap), "utf8");
+  await writeFile(path.join(llmDir, "planning-notes.md"), renderRemoteLlmSection("Remote LLM Planning Notes", parsed.planningNotes), "utf8");
+}
+
+function configForRemoteOutput(config: PmAgentConfig, adapterName: string, ledgerDir: string, outputPath: string): PmAgentConfig {
+  const adapter = config.model?.adapters?.[adapterName];
+  if (!adapter || adapter.type !== "agent") return config;
+  return {
+    ...config,
+    model: {
+      ...config.model,
+      adapters: {
+        ...config.model?.adapters,
+        [adapterName]: {
+          ...adapter,
+          allowedOutputs: [path.relative(ledgerDir, outputPath)]
+        }
+      }
+    }
+  };
+}
+
+function buildRemoteLlmPrompt(baseDir: string, outputPath: string): string {
+  return `You are helping build a remote project understanding knowledge base for a PM agent.
+
+Use only these files:
+- ${path.join(baseDir, "project/project-brief.md")}
+- ${path.join(baseDir, "project/area-map.md")}
+- ${path.join(baseDir, "project/capability-map.md")}
+- ${path.join(baseDir, "project/issue-map.md")}
+- ${path.join(baseDir, "project/repository-context.json")}
+- ${path.join(baseDir, "safety/safety-report.md")}
+
+Do not clone the repository. Do not inspect arbitrary local files. Do not include raw secret-like values.
+
+Write JSON only to:
+${outputPath}
+
+Required JSON shape:
+{
+  "projectBrief": {
+    "purpose": "string",
+    "currentWork": ["string"],
+    "risks": ["string"],
+    "planningRules": ["string"]
+  },
+  "capabilityMap": [
+    {
+      "capability": "string",
+      "description": "string",
+      "relatedIssues": ["string"],
+      "issueKeywords": ["string"]
+    }
+  ],
+  "planningNotes": ["string"]
+}
+`;
+}
+
+function remoteLlmSchema(): object {
+  return {
+    type: "object",
+    required: ["projectBrief", "capabilityMap", "planningNotes"],
+    additionalProperties: false
+  };
+}
+
+function renderRemoteLlmSection(title: string, value: unknown): string {
+  return `# ${title}
+
+\`\`\`json
+${JSON.stringify(value, null, 2)}
+\`\`\`
+`;
+}
+
+function redactRemotePrompt(prompt: string): string {
+  return prompt
+    .replace(/sk-[A-Za-z0-9_-]{20,}/g, "[REDACTED_OPENAI_API_KEY]")
+    .replace(/ghp_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
+    .replace(/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
+    .replace(/xox[baprs]-[A-Za-z0-9-]+/g, "[REDACTED_SLACK_TOKEN]")
+    .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_ACCESS_KEY]")
+    .replace(/\b(postgres|mysql|mongodb\+srv):\/\/[^\s"'`]+/g, "[REDACTED_DATABASE_URL]")
+    .replace(/^([A-Z0-9_]*(SECRET|TOKEN|PASSWORD))=.*$/gm, "$1=[REDACTED_SECRET]");
 }
 
 function truncate(value: string, maxLength: number): string {
