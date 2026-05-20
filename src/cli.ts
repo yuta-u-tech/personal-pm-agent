@@ -138,7 +138,7 @@ Usage:
   pm-agent setup [ledger-dir] [--ledger-name progress-ledger] [--private|--public] [--owner github-user] [--select-repos] [--repo-scope all|owned|collaborating] [--no-github]
   pm-agent collect [ledger-dir]
   pm-agent dashboard [ledger-dir] [--port 4783] [--no-open]
-  pm-agent understand [repo-dir] [--refresh] [--budget cheap|standard|deep]
+  pm-agent understand [repo-dir] [--refresh] [--budget cheap|standard|deep] [--llm] [--adapter background-agent] [--ledger ../progress-ledger]
   pm-agent understand-active [ledger-dir] [--refresh] [--no-github]
   pm-agent report [ledger-dir] [--adapter mock|background-agent] [--open]
   pm-agent share [ledger-dir] [--open]
@@ -185,6 +185,8 @@ function parseArgs(args: string[]): {
     number?: string;
     refresh?: boolean;
     budget?: string;
+    llm?: boolean;
+    ledger?: string;
   };
 } {
   const options: {
@@ -210,6 +212,8 @@ function parseArgs(args: string[]): {
     number?: string;
     refresh?: boolean;
     budget?: string;
+    llm?: boolean;
+    ledger?: string;
   } = {};
   let target: string | undefined;
   let taskAction: string | undefined;
@@ -325,6 +329,15 @@ function parseArgs(args: string[]): {
     }
     if (arg === "--budget") {
       options.budget = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--llm") {
+      options.llm = true;
+      continue;
+    }
+    if (arg === "--ledger") {
+      options.ledger = args[index + 1];
       index += 1;
       continue;
     }

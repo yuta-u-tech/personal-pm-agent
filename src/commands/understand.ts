@@ -6,13 +6,18 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { loadConfig, type PmAgentConfig } from "../core/config.js";
 import { ensureDir, writeJson, writeTextIfMissing } from "../core/fs.js";
+import { createAdapter } from "../model/index.js";
 
 const execFileAsync = promisify(execFile);
 
 export type UnderstandOptions = {
   refresh?: boolean;
   budget?: string;
+  llm?: boolean;
+  adapter?: string;
+  ledger?: string;
 };
 
 type SensitiveAction = "skip" | "structure-only" | "redact";
@@ -357,7 +362,12 @@ export async function understandCommand(targetDir: string, options: UnderstandOp
   await writeJson(path.join(repoDir, ".pm-agent/cache/understand-cache.json"), nextCache);
   await writeJson(path.join(repoDir, ".pm-agent/cache/token-budget.json"), budget);
 
-  return renderUnderstandLog(repoDir, stats, budget, safetyFindings.length);
+  let llmOutput: string | undefined;
+  if (options.llm) {
+    llmOutput = await generateLlmUnderstanding(repoDir, options);
+  }
+
+  return renderUnderstandLog(repoDir, stats, budget, safetyFindings.length, llmOutput);
 }
 
 async function ensureKnowledgeDirs(repoDir: string): Promise<void> {
@@ -367,6 +377,7 @@ async function ensureKnowledgeDirs(repoDir: string): Promise<void> {
     ensureDir(path.join(repoDir, ".pm-agent/file-summaries")),
     ensureDir(path.join(repoDir, ".pm-agent/project")),
     ensureDir(path.join(repoDir, ".pm-agent/safety")),
+    ensureDir(path.join(repoDir, ".pm-agent/llm")),
     ensureDir(path.join(repoDir, ".pm-agent/cache"))
   ]);
 }
@@ -1418,7 +1429,151 @@ function safeFileName(filePath: string): string {
   return filePath.replace(/[^A-Za-z0-9_.-]+/g, "__");
 }
 
-function renderUnderstandLog(repoDir: string, stats: UnderstandStats, budget: TokenBudget, safetyFindings: number): string {
+async function generateLlmUnderstanding(repoDir: string, options: UnderstandOptions): Promise<string> {
+  const ledgerDir = resolveUnderstandLedgerDir(repoDir, options.ledger);
+  const config = await loadConfig(ledgerDir);
+  const adapterName = options.adapter ?? config.model?.defaultAdapter ?? "background-agent";
+  if (adapterName === "mock") {
+    throw new Error("understand --llm requires a non-mock adapter. Try --adapter background-agent.");
+  }
+
+  const outputPath = path.join(repoDir, ".pm-agent/llm/understand-llm.json");
+  const schemaPath = path.join(repoDir, ".pm-agent/llm/understand-llm.schema.json");
+  const promptPath = path.join(repoDir, ".pm-agent/llm/understand-input.md");
+  const prompt = buildLlmUnderstandPrompt(repoDir, outputPath);
+  const safePrompt = redactSecrets(prompt);
+  if (Object.keys(safePrompt.counts).length > 0) {
+    throw new Error("LLM understand prompt blocked: possible secret detected after redaction.");
+  }
+
+  await writeJson(schemaPath, understandLlmSchema());
+  await writeFile(promptPath, prompt, "utf8");
+
+  const adapterConfig = configForUnderstandOutput(config, adapterName);
+  const adapter = createAdapter(adapterConfig, adapterName);
+  await adapter.generate({
+    date: "understand",
+    ledgerDir: repoDir,
+    contextPackPath: path.join(repoDir, ".pm-agent/catalog/file-cards.json"),
+    schemaPath,
+    outputPath,
+    prompt,
+    timeoutMs: 600_000
+  });
+
+  const parsed = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
+  await writeFile(path.join(repoDir, ".pm-agent/llm/project-brief.md"), renderLlmSection("LLM Project Brief", parsed.projectBrief), "utf8");
+  await writeFile(path.join(repoDir, ".pm-agent/llm/area-map.md"), renderLlmSection("LLM Area Map", parsed.areaMap), "utf8");
+  await writeFile(path.join(repoDir, ".pm-agent/llm/capability-map.md"), renderLlmSection("LLM Capability Map", parsed.capabilityMap), "utf8");
+  await writeFile(path.join(repoDir, ".pm-agent/llm/planning-notes.md"), renderLlmSection("LLM Planning Notes", parsed.planningNotes), "utf8");
+  return outputPath;
+}
+
+function resolveUnderstandLedgerDir(repoDir: string, configured: string | undefined): string {
+  const candidates = [
+    configured ? path.resolve(process.cwd(), configured) : "",
+    process.env.PM_AGENT_LEDGER_DIR ? path.resolve(process.env.PM_AGENT_LEDGER_DIR) : "",
+    path.join(path.dirname(repoDir), "progress-ledger"),
+    repoDir
+  ].filter(Boolean);
+  return candidates.find((candidate) => existsSync(path.join(candidate, "pm-agent.config.json"))) ?? repoDir;
+}
+
+function configForUnderstandOutput(config: PmAgentConfig, adapterName: string): PmAgentConfig {
+  const adapter = config.model?.adapters?.[adapterName];
+  if (!adapter || adapter.type !== "agent") return config;
+  return {
+    ...config,
+    model: {
+      ...config.model,
+      adapters: {
+        ...config.model?.adapters,
+        [adapterName]: {
+          ...adapter,
+          allowedOutputs: [".pm-agent/llm/understand-llm.json"]
+        }
+      }
+    }
+  };
+}
+
+function buildLlmUnderstandPrompt(repoDir: string, outputPath: string): string {
+  return `You are helping build a project understanding knowledge base for a PM agent.
+
+Read only these generated, safety-filtered pm-agent files:
+- .pm-agent/catalog/file-cards.json
+- .pm-agent/graph/dependency-graph.json
+- .pm-agent/graph/reverse-dependency-index.json
+- .pm-agent/file-summaries/*.md
+- .pm-agent/project/project-brief.md
+- .pm-agent/project/area-map.md
+- .pm-agent/project/capability-map.md
+- .pm-agent/project/issue-map.md
+- .pm-agent/safety/safety-report.md
+
+Do not inspect ignored files, .env files, credentials, raw secret files, or arbitrary repository files.
+Use the safety report. User approval does not bypass redaction.
+
+Your task:
+1. Produce a deeper project brief that explains purpose, architecture, main flows, and planning rules.
+2. Produce an area map that explains responsibilities, important files, likely change surfaces, and risks.
+3. Produce a capability map useful for mapping future Issues to files and areas.
+4. Produce planning notes for task splitting and PM usage.
+
+Write JSON only to:
+${outputPath}
+
+Required JSON shape:
+{
+  "projectBrief": {
+    "purpose": "string",
+    "architecture": ["string"],
+    "mainFlows": ["string"],
+    "currentRisks": ["string"],
+    "planningRules": ["string"]
+  },
+  "areaMap": [
+    {
+      "area": "string",
+      "responsibility": "string",
+      "importantFiles": ["string"],
+      "changeRisks": ["string"]
+    }
+  ],
+  "capabilityMap": [
+    {
+      "capability": "string",
+      "description": "string",
+      "areas": ["string"],
+      "files": ["string"],
+      "issueKeywords": ["string"]
+    }
+  ],
+  "planningNotes": ["string"]
+}
+
+Repository root: ${repoDir}
+`;
+}
+
+function understandLlmSchema(): object {
+  return {
+    type: "object",
+    required: ["projectBrief", "areaMap", "capabilityMap", "planningNotes"],
+    additionalProperties: false
+  };
+}
+
+function renderLlmSection(title: string, value: unknown): string {
+  return `# ${title}
+
+\`\`\`json
+${JSON.stringify(value, null, 2)}
+\`\`\`
+`;
+}
+
+function renderUnderstandLog(repoDir: string, stats: UnderstandStats, budget: TokenBudget, safetyFindings: number, llmOutput?: string): string {
   const budgetAdvice = budget.trimmedDeepReadFiles > 0
     ? `\nToken budget exceeded initial selection. Trimmed deep-read files: ${budget.trimmedDeepReadFiles}. Use --budget deep for broader reading.`
     : "";
@@ -1460,6 +1615,7 @@ ${path.join(repoDir, ".pm-agent/project/capability-map.json")}
 ${path.join(repoDir, ".pm-agent/project/issue-map.md")}
 ${path.join(repoDir, ".pm-agent/project/issue-map.json")}
 ${path.join(repoDir, ".pm-agent/safety/safety-report.md")}
+${llmOutput ? `${llmOutput}\n${path.join(repoDir, ".pm-agent/llm/project-brief.md")}\n${path.join(repoDir, ".pm-agent/llm/area-map.md")}\n${path.join(repoDir, ".pm-agent/llm/capability-map.md")}\n${path.join(repoDir, ".pm-agent/llm/planning-notes.md")}` : ""}
 
 Safety findings: ${safetyFindings}`;
 }

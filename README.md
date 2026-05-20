@@ -138,6 +138,7 @@ npm run pm-agent -- understand ../study-forge
 npm run pm-agent -- understand ../study-forge --refresh
 npm run pm-agent -- understand ../study-forge --budget cheap
 npm run pm-agent -- understand ../study-forge --budget deep
+npm run pm-agent -- understand ../study-forge --llm --adapter background-agent --ledger ../progress-ledger
 npm run pm-agent -- understand-active ../progress-ledger --refresh
 ```
 
@@ -163,6 +164,16 @@ What `understand` reads:
 - selected deep-read files after safety filtering and token budget trimming
 
 `--budget cheap|standard|deep` controls how many files are selected for deep read and how much token budget is used. `standard` is the default. `cheap` keeps the knowledge base smaller for quick setup, while `deep` reads more important files for planning.
+
+By default, `understand` is deterministic and rule-based. Add `--llm --adapter background-agent` to send only the generated, safety-filtered `.pm-agent` knowledge files to the configured background agent. The agent writes deeper interpretation to:
+
+- `.pm-agent/llm/understand-llm.json`
+- `.pm-agent/llm/project-brief.md`
+- `.pm-agent/llm/area-map.md`
+- `.pm-agent/llm/capability-map.md`
+- `.pm-agent/llm/planning-notes.md`
+
+The LLM path does not send raw ignored files, `.env` files, credentials, or arbitrary repository files. It uses the generated File Cards, dependency graph, File Summaries, Project Brief, Area Map, Capability Map, Issue Map, and Safety Report.
 
 `.pm-agentignore` is separate from `.gitignore`. It is created automatically when missing and excludes common secret, dependency, build, generated, and large-file paths such as `.env`, `.env.*`, `*.pem`, `*.key`, `credentials.json`, `service-account*.json`, `secrets/`, `node_modules/`, `dist/`, `build/`, `coverage/`, lock files, maps, database dumps, and archives.
 
