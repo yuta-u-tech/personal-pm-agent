@@ -10,6 +10,7 @@ import {
   dispatchCommand,
   prepareCommand
 } from "./commands/planning-flow.js";
+import { projectLogCommand, reflectCommand } from "./commands/project-log.js";
 import { reportCommand } from "./commands/report.js";
 import { repositoryCommand } from "./commands/repository.js";
 import { shareCommand } from "./commands/share.js";
@@ -148,6 +149,18 @@ Next:
     return;
   }
 
+  if (command === "log") {
+    const message = await projectLogCommand(resolveTarget("."), parsed.target, parsed.taskAction, parsed.options);
+    console.log(message);
+    return;
+  }
+
+  if (command === "reflect") {
+    const message = await reflectCommand(resolveTarget("."), parsed.target, parsed.options);
+    console.log(message);
+    return;
+  }
+
   if (command === "task") {
     const message = await taskCommand(targetDir, parsed.taskAction, parsed.options);
     console.log(message);
@@ -184,6 +197,8 @@ Usage:
   pm-agent adjust [--fewer] [--safer] [--prefer repo] [--exclude repo#123] [--include repo#123]
   pm-agent prepare [repo#123]
   pm-agent dispatch repo#123
+  pm-agent log draft repo [--note "..."]
+  pm-agent reflect repo
   pm-agent task [ledger-dir] add --list active --title "Task title"
   pm-agent task [ledger-dir] move --from active --to done --title "Task title"
   pm-agent task [ledger-dir] list [--list active]
@@ -232,6 +247,7 @@ function parseArgs(args: string[]): {
     prefer?: string;
     exclude?: string;
     include?: string;
+    note?: string;
   };
 } {
   const options: {
@@ -264,6 +280,7 @@ function parseArgs(args: string[]): {
     prefer?: string;
     exclude?: string;
     include?: string;
+    note?: string;
   } = {};
   let target: string | undefined;
   let taskAction: string | undefined;
@@ -411,6 +428,11 @@ function parseArgs(args: string[]): {
     }
     if (arg === "--include") {
       options.include = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--note") {
+      options.note = args[index + 1];
       index += 1;
       continue;
     }

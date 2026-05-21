@@ -72,9 +72,13 @@ npm run pm-agent -- adjust ../progress-ledger --exclude project-b#30
 npm run pm-agent -- prepare project-a#12
 npm run pm-agent -- prepare
 npm run pm-agent -- dispatch project-a#12
+npm run pm-agent -- log draft project-a --note "UIは進んだがAPI保存方式が未決"
+npm run pm-agent -- reflect project-a
 ```
 
 `breakdown` reads the parent Issue and `.pm-agent` project understanding to write a proposal under `outputs/YYYY-MM-DD/breakdowns/`. `breakdown apply` currently performs the authentication and permission preflight and prints the subissues that would be created; automatic GitHub issue creation is intentionally deferred for MVP. `morning` writes zero-input daily planning files to `outputs/YYYY-MM-DD/plan.md`, `plan.json`, and `share.md`. `adjust` writes versioned plan files such as `plan.v2.md` without overwriting the original. `prepare` writes implementation-agent Task Briefs under `outputs/YYYY-MM-DD/tasks/`, and `dispatch` prints the manual command to pass a Task Brief to Codex.
+
+At the end of a workday, `log draft` reduces the cost of writing a project成果物ログ by using Git status, diff stat, recent commits, and today's Task Briefs to generate `outputs/YYYY-MM-DD/project-logs/<repo>.draft.md`. Edit that draft if needed, then run `reflect` to produce `outputs/YYYY-MM-DD/reflections/<repo>.md` with progress, open decisions, recommended direction, suggested Issues, and morning-plan input.
 
 Task operations:
 
