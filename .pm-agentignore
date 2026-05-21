@@ -1,0 +1,42 @@
+# secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+credentials.json
+service-account*.json
+firebase-adminsdk*.json
+secrets/
+secret/
+.secrets/
+certs/
+keys/
+.aws/
+.gcp/
+.azure/
+.ssh/
+.kube/
+
+# dependencies / build
+node_modules/
+dist/
+build/
+coverage/
+.next/
+.nuxt/
+vendor/
+
+# generated / large
+*.lock
+*.min.js
+*.map
+*.sqlite
+*.db
+*.dump
+*.zip
+*.tar
+*.gz

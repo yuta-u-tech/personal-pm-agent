@@ -59,6 +59,23 @@ gh auth login
 npm run pm-agent -- morning ../progress-ledger --date 2026-05-18
 ```
 
+Planning flow after repository understanding:
+
+```sh
+npm run pm-agent -- breakdown project-a#120
+npm run pm-agent -- breakdown apply project-a#120
+npm run pm-agent -- morning ../progress-ledger
+npm run pm-agent -- adjust ../progress-ledger --fewer
+npm run pm-agent -- adjust ../progress-ledger --safer
+npm run pm-agent -- adjust ../progress-ledger --prefer project-a
+npm run pm-agent -- adjust ../progress-ledger --exclude project-b#30
+npm run pm-agent -- prepare project-a#12
+npm run pm-agent -- prepare
+npm run pm-agent -- dispatch project-a#12
+```
+
+`breakdown` reads the parent Issue and `.pm-agent` project understanding to write a proposal under `outputs/YYYY-MM-DD/breakdowns/`. `breakdown apply` currently performs the authentication and permission preflight and prints the subissues that would be created; automatic GitHub issue creation is intentionally deferred for MVP. `morning` writes zero-input daily planning files to `outputs/YYYY-MM-DD/plan.md`, `plan.json`, and `share.md`. `adjust` writes versioned plan files such as `plan.v2.md` without overwriting the original. `prepare` writes implementation-agent Task Briefs under `outputs/YYYY-MM-DD/tasks/`, and `dispatch` prints the manual command to pass a Task Brief to Codex.
+
 Task operations:
 
 ```sh

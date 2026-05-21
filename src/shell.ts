@@ -107,9 +107,8 @@ async function runShellCommand(targetDir: string, line: string): Promise<string>
     return `Generated suggestions${dashboardUrl ? " and opened dashboard" : ""}:\n- Dashboard: ${dashboardUrl ?? "(not opened)"}\n- Markdown: ${result.markdownPath}\n\nNext:\n- Review suggested ledger updates before editing task files.\n- Run /dashboard tasks to check the current active/waiting/backlog state.`;
   }
   if (command === "/morning") {
-    await morningCommand(targetDir, { adapter: parseOption(args, "--adapter") ?? "background-agent" });
-    const dashboardUrl = await openDashboardUnlessDisabled(args, targetDir, "daily");
-    return `Completed morning run${dashboardUrl ? " and opened dashboard" : ""}:\n- Dashboard: ${dashboardUrl ?? "(not opened)"}\n\nNext:\n1. Read Today's Focus in the dashboard.\n2. Run /discover github to list open Issues assigned to you across registered repos.\n3. Run /discover github <repo-id> if you want to narrow it down.\n4. Run /import <number> --list active to activate an Issue candidate.\n5. Run /tasks active or /dashboard tasks to confirm active tasks.\n6. If an Issue is too large, run /split-issue <repo-id> <issue-number> first.`;
+    const result = await morningCommand(targetDir, { adapter: parseOption(args, "--adapter") ?? "background-agent" });
+    return `${result}\n\nNext:\n1. Review today's plan output.\n2. Run /discover github if you need fresher candidates.\n3. Use pm-agent adjust if the plan needs correction.\n4. Use pm-agent prepare to generate Task Briefs.`;
   }
   if (command === "/tasks") {
     return taskCommand(targetDir, "list", { list: args[0] });

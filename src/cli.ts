@@ -3,6 +3,13 @@ import { collectCommand } from "./commands/collect.js";
 import { dashboardCommand } from "./commands/dashboard.js";
 import { initCommand } from "./commands/init.js";
 import { morningCommand } from "./commands/morning.js";
+import {
+  adjustCommand,
+  breakdownApplyCommand,
+  breakdownCommand,
+  dispatchCommand,
+  prepareCommand
+} from "./commands/planning-flow.js";
 import { reportCommand } from "./commands/report.js";
 import { repositoryCommand } from "./commands/repository.js";
 import { shareCommand } from "./commands/share.js";
@@ -101,15 +108,43 @@ Next:
   }
 
   if (command === "morning") {
-    await morningCommand(targetDir, parsed.options);
-    console.log(`Completed morning run: ${targetDir}
+    const message = await morningCommand(targetDir, parsed.options);
+    console.log(`${message}
 
 Next:
-1. Open the dashboard: pm-agent dashboard ${targetDir}
-2. Review Today's Focus.
-3. Discover Issue candidates: pm-agent task ${targetDir} discover --source github
-4. Activate one candidate: pm-agent task ${targetDir} import --number 1 --list active
-5. Confirm active tasks: pm-agent task ${targetDir} list --list active`);
+1. Review outputs for today's plan.
+2. If an Issue is too large, run: pm-agent breakdown repo#123
+3. Adjust if needed: pm-agent adjust --fewer | --safer | --prefer repo
+4. Generate Task Briefs: pm-agent prepare`);
+    return;
+  }
+
+  if (command === "breakdown") {
+    if (parsed.target === "apply") {
+      const message = await breakdownApplyCommand(resolveTarget("."), parsed.taskAction, parsed.options);
+      console.log(message);
+      return;
+    }
+    const message = await breakdownCommand(resolveTarget("."), parsed.target, parsed.options);
+    console.log(message);
+    return;
+  }
+
+  if (command === "adjust") {
+    const message = await adjustCommand(targetDir, parsed.options);
+    console.log(message);
+    return;
+  }
+
+  if (command === "prepare") {
+    const message = await prepareCommand(resolveTarget("."), parsed.target, parsed.options);
+    console.log(message);
+    return;
+  }
+
+  if (command === "dispatch") {
+    const message = await dispatchCommand(resolveTarget("."), parsed.target, parsed.options);
+    console.log(message);
     return;
   }
 
@@ -144,6 +179,11 @@ Usage:
   pm-agent share [ledger-dir] [--open]
   pm-agent suggest [ledger-dir] [--open]
   pm-agent morning [ledger-dir] [--adapter mock|background-agent]
+  pm-agent breakdown repo#123
+  pm-agent breakdown apply repo#123
+  pm-agent adjust [--fewer] [--safer] [--prefer repo] [--exclude repo#123] [--include repo#123]
+  pm-agent prepare [repo#123]
+  pm-agent dispatch repo#123
   pm-agent task [ledger-dir] add --list active --title "Task title"
   pm-agent task [ledger-dir] move --from active --to done --title "Task title"
   pm-agent task [ledger-dir] list [--list active]
@@ -187,6 +227,11 @@ function parseArgs(args: string[]): {
     budget?: string;
     llm?: boolean;
     ledger?: string;
+    fewer?: boolean;
+    safer?: boolean;
+    prefer?: string;
+    exclude?: string;
+    include?: string;
   };
 } {
   const options: {
@@ -214,6 +259,11 @@ function parseArgs(args: string[]): {
     budget?: string;
     llm?: boolean;
     ledger?: string;
+    fewer?: boolean;
+    safer?: boolean;
+    prefer?: string;
+    exclude?: string;
+    include?: string;
   } = {};
   let target: string | undefined;
   let taskAction: string | undefined;
@@ -338,6 +388,29 @@ function parseArgs(args: string[]): {
     }
     if (arg === "--ledger") {
       options.ledger = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--fewer") {
+      options.fewer = true;
+      continue;
+    }
+    if (arg === "--safer") {
+      options.safer = true;
+      continue;
+    }
+    if (arg === "--prefer") {
+      options.prefer = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--exclude") {
+      options.exclude = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--include") {
+      options.include = args[index + 1];
       index += 1;
       continue;
     }

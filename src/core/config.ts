@@ -20,6 +20,7 @@ export type PmAgentConfig = {
     defaultAdapter?: string;
     adapters?: Record<string, AdapterConfig>;
   };
+  owners?: Record<string, string[]>;
   collect?: {
     projects?: { enabled?: boolean };
     tasks?: { enabled?: boolean };
