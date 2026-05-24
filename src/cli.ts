@@ -2,6 +2,7 @@
 import { collectCommand } from "./commands/collect.js";
 import { dashboardCommand } from "./commands/dashboard.js";
 import { initCommand } from "./commands/init.js";
+import { issueCommand } from "./commands/issue.js";
 import { morningCommand } from "./commands/morning.js";
 import {
   adjustCommand,
@@ -10,6 +11,7 @@ import {
   dispatchCommand,
   prepareCommand
 } from "./commands/planning-flow.js";
+import { pageCommand } from "./commands/page.js";
 import { projectLogCommand, reflectCommand } from "./commands/project-log.js";
 import { reportCommand } from "./commands/report.js";
 import { repositoryCommand } from "./commands/repository.js";
@@ -161,6 +163,18 @@ Next:
     return;
   }
 
+  if (command === "page") {
+    const message = await pageCommand(resolveTarget("."), parsed.target, parsed.taskAction, parsed.options);
+    console.log(message);
+    return;
+  }
+
+  if (command === "issue") {
+    const message = await issueCommand(resolveTarget("."), parsed.target, parsed.taskAction, parsed.options);
+    console.log(message);
+    return;
+  }
+
   if (command === "task") {
     const message = await taskCommand(targetDir, parsed.taskAction, parsed.options);
     console.log(message);
@@ -198,7 +212,16 @@ Usage:
   pm-agent prepare [repo#123]
   pm-agent dispatch repo#123
   pm-agent log draft repo [--note "..."]
+  pm-agent log review repo
+  pm-agent log edit repo
   pm-agent reflect repo
+  pm-agent page menu [--open]
+  pm-agent page today [--open]
+  pm-agent page status|plan|share|report|suggestions [--open]
+  pm-agent page project repo [--open]
+  pm-agent page logs|reflections|issues|tasks|breakdowns|repos [--open]
+  pm-agent issue propose repo
+  pm-agent issue apply repo
   pm-agent task [ledger-dir] add --list active --title "Task title"
   pm-agent task [ledger-dir] move --from active --to done --title "Task title"
   pm-agent task [ledger-dir] list [--list active]

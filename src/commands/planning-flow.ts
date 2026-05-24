@@ -138,31 +138,50 @@ export async function breakdownApplyCommand(targetDir: string, issueRefText: str
   if (!existsSync(proposalPath)) {
     throw new Error(`Breakdown proposal not found: ${proposalPath}. Run pm-agent breakdown ${issueRef.key} first.`);
   }
-  const proposal = JSON.parse(await readFile(proposalPath, "utf8")) as { subissues?: SubissueProposal[]; parent?: { title?: string } };
+  const proposal = JSON.parse(await readFile(proposalPath, "utf8")) as { subissues?: SubissueProposal[]; parent?: { title?: string; number?: number } };
   const repo = await resolveRepoContext(targetDir, issueRef.repoId);
   const auth = await checkGitHubAuth(repo);
-  const lines = [
-    "Checking GitHub authentication...",
-    auth.ok ? `✓ authenticated as ${auth.login ?? "unknown"}` : "GitHub authentication is required to create subissues.",
-    auth.permission ? `✓ repo permission: ${auth.permission}` : repo.fullName ? "repo permission: unknown" : "repo permission: unavailable",
-    "",
-    `About to create ${(proposal.subissues ?? []).length} subissues under ${issueRef.key}`,
-    "",
-    ...(proposal.subissues ?? []).map((item, index) =>
-      [
-        `${index + 1}. ${item.title}`,
-        `   assignee: ${item.suggestedAssignees.map((assignee) => `@${assignee}`).join(", ") || "unassigned"}`,
-        `   labels: ${item.labels.join(", ") || "none"}`
-      ].join("\n")
-    ),
-    "",
-    "MVP note: automatic GitHub subissue creation is intentionally not enabled yet.",
-    "Next implementation step: prompt for final confirmation, create GitHub issues, then save created issue URLs."
-  ];
   if (!auth.ok) {
-    lines.push("", "Run gh auth login or configure GITHUB_TOKEN.");
+    throw new Error("GitHub authentication is required to create subissues. Run gh auth login or configure GITHUB_TOKEN.");
   }
-  return lines.join("\n");
+  if (!repo.fullName) {
+    throw new Error(`Could not resolve GitHub repository for ${issueRef.repoId}. Add github: owner/name to links/repositories.md or set an origin remote.`);
+  }
+  if (auth.permission === "read") {
+    throw new Error(`GitHub write permission is required for ${repo.fullName}. Current permission: read.`);
+  }
+
+  const created = [];
+  for (const item of proposal.subissues ?? []) {
+    const url = await createGitHubIssue(repo.fullName, item.title, renderSubissueBody(issueRef, item));
+    created.push({ title: item.title, url });
+  }
+
+  if (created.length > 0 && issueRef.number > 0) {
+    await ghText([
+      "issue",
+      "comment",
+      String(issueRef.number),
+      "--repo",
+      repo.fullName,
+      "--body",
+      ["Created subissues from breakdown proposal:", ...created.map((item) => `- ${item.title}: ${item.url}`)].join("\n")
+    ]);
+  }
+
+  const createdPath = path.join(targetDir, "outputs", date, "breakdowns", `${issueRef.repoId}-${issueRef.number}.created.json`);
+  await writeJson(createdPath, {
+    generatedAt: new Date().toISOString(),
+    parent: issueRef.key,
+    repository: repo.fullName,
+    created
+  });
+
+  return [
+    `Created ${created.length} subissues under ${issueRef.key}`,
+    ...created.map((item, index) => `${index + 1}. ${item.url}`),
+    `Saved result: ${createdPath}`
+  ].join("\n");
 }
 
 export async function morningPlanCommand(targetDir: string, options: PlanningCommandOptions = {}): Promise<string> {
@@ -231,7 +250,8 @@ async function buildMorningPlan(targetDir: string, date: string, adjustments: st
   const candidates = await readIssueCandidates(targetDir);
   const active = await readChecklist(path.join(targetDir, "tasks", "active.md"));
   const waiting = await readChecklist(path.join(targetDir, "tasks", "waiting.md"));
-  const all = [...candidates, ...active, ...waiting];
+  const reflections = await readReflectionCandidates(targetDir, date);
+  const all = [...reflections, ...candidates, ...active, ...waiting];
   const unique = uniquePlanIssues(all.map((item) => classifyPlanIssue(item.ref, item.title, item.labels ?? [], item.source)));
   const doToday = unique
     .filter((issue) => issue.status === "in_progress" || issue.status === "ready_to_work")
@@ -243,6 +263,7 @@ async function buildMorningPlan(targetDir: string, date: string, adjustments: st
     adjustments,
     policy: [
       "既に着手中のIssueを優先する",
+      "前日のreflectionで示されたnext actionを優先する",
       "ready_to_work のIssueを優先する",
       "blocked / needs_clarification は実装対象にしない",
       "too_large はbreakdown候補にする",
@@ -255,6 +276,30 @@ async function buildMorningPlan(targetDir: string, date: string, adjustments: st
     breakdownCandidates: unique.filter((issue) => issue.status === "too_large").slice(0, 5),
     notToday: unique.filter((issue) => !doToday.includes(issue)).slice(0, 10)
   };
+}
+
+async function readReflectionCandidates(targetDir: string, date: string): Promise<Array<{ ref: string; title: string; labels?: string[]; source: string }>> {
+  const dir = path.join(targetDir, "outputs", date, "reflections");
+  if (!existsSync(dir)) return [];
+  const entries = await readdir(dir, { withFileTypes: true });
+  const candidates: Array<{ ref: string; title: string; labels?: string[]; source: string }> = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const repo = path.basename(entry.name, ".md");
+    const markdown = await readFile(path.join(dir, entry.name), "utf8");
+    const next = extractSectionBullets(markdown, "Recommended Direction");
+    const decisions = extractSectionBullets(markdown, "Open Decisions");
+    const sourceItems = next.length > 0 ? next : decisions;
+    for (const item of sourceItems.slice(0, 3)) {
+      candidates.push({
+        ref: `${repo}#0`,
+        title: `Reflection: ${item}`,
+        labels: decisions.length > 0 ? ["needs_clarification"] : ["reflection"],
+        source: "reflection"
+      });
+    }
+  }
+  return candidates;
 }
 
 async function readIssueCandidates(targetDir: string): Promise<Array<{ ref: string; title: string; labels?: string[]; source: string }>> {
@@ -296,14 +341,16 @@ function classifyPlanIssue(ref: string, title: string, labels: string[], source:
   const blocked = /(blocked|blocker|依存|待ち|保留)/i.test(haystack);
   const unclear = /(clarify|needs clarification|仕様|確認|不明|決める)/i.test(haystack);
   const risk = /(auth|認証|billing|請求|migration|移行|security|権限)/i.test(haystack) ? "high" : tooLarge ? "medium" : "medium";
-  const status = tooLarge ? "too_large" : blocked ? "blocked" : unclear ? "needs_clarification" : source === "active_task" ? "in_progress" : "ready_to_work";
+  const status = source === "reflection" && labels.includes("needs_clarification")
+    ? "needs_clarification"
+    : tooLarge ? "too_large" : blocked ? "blocked" : unclear ? "needs_clarification" : source === "active_task" ? "in_progress" : "ready_to_work";
   return {
     ref,
     title,
     status,
     risk,
     labels,
-    reason: status === "in_progress" ? "現在のactive taskにあるため" : status === "too_large" ? "複数領域にまたがる大きなIssueの可能性が高いため" : "ready_to_work と判断できる候補のため",
+    reason: source === "reflection" ? "reflectionで翌日の方向性として示されているため" : status === "in_progress" ? "現在のactive taskにあるため" : status === "too_large" ? "複数領域にまたがる大きなIssueの可能性が高いため" : "ready_to_work と判断できる候補のため",
     firstAction: status === "too_large" ? `pm-agent breakdown ${ref}` : "Issue本文と関連ファイルを確認する"
   };
 }
@@ -576,6 +623,47 @@ async function ghJson<T>(args: string[]): Promise<T> {
   return JSON.parse(stdout) as T;
 }
 
+async function ghText(args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("gh", args, { maxBuffer: 1024 * 1024 });
+  return stdout.trim();
+}
+
+async function createGitHubIssue(repoFullName: string, title: string, body: string): Promise<string> {
+  return ghText(["issue", "create", "--repo", repoFullName, "--title", title, "--body", body]);
+}
+
+function renderSubissueBody(parent: IssueRef, item: SubissueProposal): string {
+  return `Parent: #${parent.number}
+
+## Scope
+
+${item.title}
+
+## Suggested Metadata
+
+- type: ${item.type}
+- area: ${item.area}
+- capability: ${item.capability}
+- effort: ${item.effort}
+- risk: ${item.risk}
+- suggested assignees: ${item.suggestedAssignees.map((assignee) => `@${assignee}`).join(", ") || "unassigned"}
+- suggested labels: ${item.labels.join(", ") || "none"}
+- depends_on: ${item.dependsOn.length > 0 ? item.dependsOn.join(", ") : "none"}
+
+## Likely Files
+
+${item.likelyFiles.length > 0 ? item.likelyFiles.map((file) => `- ${file}`).join("\n") : "- none"}
+
+## Done When
+
+${item.doneWhen.map((done) => `- [ ] ${done}`).join("\n")}
+
+## Notes
+
+Generated by pm-agent breakdown apply.
+`;
+}
+
 function matchKnowledge(text: string, knowledge: Knowledge): { signal?: KnowledgeSignal; capability?: KnowledgeCapability; area?: KnowledgeArea } {
   const normalized = normalize(text);
   const signal = (knowledge.issueMap.planningSignals ?? []).find((item) => normalized.includes(normalize(item.signal)));
@@ -815,6 +903,19 @@ function extractLabelNames(detail: string): string[] {
   const labels = detail.match(/labels:\s*([^|]+)/)?.[1];
   if (!labels || labels.trim() === "none") return [];
   return labels.split(",").map((label) => label.trim()).filter(Boolean);
+}
+
+function extractSectionBullets(markdown: string, heading: string): string[] {
+  const lines = markdown.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === `## ${heading}`);
+  if (start === -1) return [];
+  const collected: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.startsWith("## ")) break;
+    const bullet = line.trim().match(/^- \s*(.+)$/)?.[1]?.trim();
+    if (bullet && bullet !== "none") collected.push(bullet);
+  }
+  return collected;
 }
 
 function comparePlanIssue(a: PlanIssue, b: PlanIssue): number {

@@ -1,7 +1,9 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
 import { promisify } from "node:util";
 import { today } from "../core/date.js";
 import { ensureDir, readTextIfExists, writeJson } from "../core/fs.js";
@@ -61,11 +63,27 @@ type Reflection = {
   };
 };
 
+type MarkdownSection = {
+  heading: string;
+  body: string;
+};
+
+type MarkdownDocument = {
+  title: string;
+  sections: MarkdownSection[];
+};
+
 export async function projectLogCommand(targetDir: string, action: string | undefined, repoId: string | undefined, options: ProjectLogOptions = {}): Promise<string> {
-  if (action !== "draft") {
-    throw new Error(`Unknown log action: ${action ?? "(missing)"}. Expected draft.`);
+  if (action === "draft") {
+    return projectLogDraftCommand(targetDir, repoId, options);
   }
-  return projectLogDraftCommand(targetDir, repoId, options);
+  if (action === "review") {
+    return projectLogReviewCommand(targetDir, repoId, options);
+  }
+  if (action === "edit") {
+    return projectLogEditCommand(targetDir, repoId, options);
+  }
+  throw new Error(`Unknown log action: ${action ?? "(missing)"}. Expected draft, review, or edit.`);
 }
 
 export async function projectLogDraftCommand(targetDir: string, repoId: string | undefined, options: ProjectLogOptions = {}): Promise<string> {
@@ -79,6 +97,85 @@ export async function projectLogDraftCommand(targetDir: string, repoId: string |
   await writeFile(`${base}.md`, renderProjectLogDraft(draft), "utf8");
   await writeJson(`${base}.json`, draft);
   return `Generated project log draft:\n- Markdown: ${base}.md\n- JSON: ${base}.json`;
+}
+
+export async function projectLogReviewCommand(targetDir: string, repoId: string | undefined, options: ProjectLogOptions = {}): Promise<string> {
+  if (!input.isTTY || !output.isTTY) {
+    throw new Error("log review requires an interactive terminal.");
+  }
+
+  const date = options.date ?? today();
+  const repo = await resolveRepoContext(targetDir, requireRepo(repoId));
+  const sourcePath = await findProjectLog(targetDir, date, repo.id) ?? await createDraftAndReturnPath(targetDir, repo.id, options);
+  const markdown = await readFile(sourcePath, "utf8");
+  const document = parseMarkdownSections(markdown);
+  const rl = createInterface({ input, output });
+
+  try {
+    output.write(`\nProject Log Review: ${repo.id} - ${date}\n`);
+    output.write(`Source: ${sourcePath}\n\n`);
+
+    let index = 0;
+    while (index < document.sections.length) {
+      const section = document.sections[index];
+      output.write(renderSectionReview(section, index, document.sections.length));
+      const action = (await rl.question("Action [n=next, a=add bullet, d=delete bullet, r=replace, s=save, q=quit] > ")).trim().toLowerCase();
+
+      if (action === "" || action === "n" || action === "y") {
+        index += 1;
+        continue;
+      }
+      if (action === "a") {
+        const bullet = (await rl.question("Bullet to add > ")).trim();
+        if (bullet) section.body = appendBullet(section.body, bullet);
+        continue;
+      }
+      if (action === "d") {
+        const bullets = sectionBullets(section.body);
+        if (bullets.length === 0) {
+          output.write("No bullets in this section.\n\n");
+          continue;
+        }
+        bullets.forEach((bullet, bulletIndex) => output.write(`${bulletIndex + 1}. ${bullet}\n`));
+        const choice = Number((await rl.question("Bullet number to delete > ")).trim());
+        if (Number.isInteger(choice) && choice >= 1 && choice <= bullets.length) {
+          section.body = deleteBullet(section.body, choice - 1);
+        }
+        continue;
+      }
+      if (action === "r") {
+        output.write("Replace section body. Enter one line; use \\n text later in the file for richer editing.\n");
+        const replacement = (await rl.question("New section body > ")).trim();
+        if (replacement) section.body = replacement.startsWith("- ") ? replacement : `- ${replacement}`;
+        continue;
+      }
+      if (action === "s") {
+        const finalPath = await saveReviewedProjectLog(targetDir, date, repo.id, document);
+        return `Saved reviewed project log:\n- Markdown: ${finalPath}`;
+      }
+      if (action === "q") {
+        return "Review exited without saving.";
+      }
+      output.write("Unknown action.\n\n");
+    }
+
+    const finalPath = await saveReviewedProjectLog(targetDir, date, repo.id, document);
+    return `Saved reviewed project log:\n- Markdown: ${finalPath}`;
+  } finally {
+    rl.close();
+  }
+}
+
+export async function projectLogEditCommand(targetDir: string, repoId: string | undefined, options: ProjectLogOptions = {}): Promise<string> {
+  const date = options.date ?? today();
+  const repo = await resolveRepoContext(targetDir, requireRepo(repoId));
+  const sourcePath = await findProjectLog(targetDir, date, repo.id) ?? await createDraftAndReturnPath(targetDir, repo.id, options);
+  const markdown = await readFile(sourcePath, "utf8");
+  const finalPath = path.join(targetDir, "outputs", date, "project-logs", `${repo.id}.md`);
+  await ensureDir(path.dirname(finalPath));
+  await writeFile(finalPath, markdown, "utf8");
+  await openExternalEditor(finalPath);
+  return `Opened project log in external editor:\n- Markdown: ${finalPath}`;
 }
 
 export async function reflectCommand(targetDir: string, repoId: string | undefined, options: ProjectLogOptions = {}): Promise<string> {
@@ -98,6 +195,100 @@ export async function reflectCommand(targetDir: string, repoId: string | undefin
 async function createDraftAndReturnPath(targetDir: string, repoId: string, options: ProjectLogOptions): Promise<string> {
   await projectLogDraftCommand(targetDir, repoId, options);
   return path.join(targetDir, "outputs", options.date ?? today(), "project-logs", `${repoId}.draft.md`);
+}
+
+async function saveReviewedProjectLog(targetDir: string, date: string, repoId: string, document: MarkdownDocument): Promise<string> {
+  const finalPath = path.join(targetDir, "outputs", date, "project-logs", `${repoId}.md`);
+  await ensureDir(path.dirname(finalPath));
+  await writeFile(finalPath, renderMarkdownDocument(document), "utf8");
+  return finalPath;
+}
+
+async function openExternalEditor(filePath: string): Promise<void> {
+  const editor = process.env.EDITOR || process.env.VISUAL || "vi";
+  const [command, ...args] = editor.split(/\s+/).filter(Boolean);
+  if (!command) throw new Error("No editor configured. Set EDITOR=emacs, EDITOR=vim, or another editor command.");
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, [...args, filePath], {
+      stdio: "inherit"
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Editor exited with code ${code ?? "unknown"}: ${command}`));
+    });
+  });
+}
+
+function parseMarkdownSections(markdown: string): MarkdownDocument {
+  const lines = markdown.split(/\r?\n/);
+  const title = lines.find((line) => line.startsWith("# ")) ?? "# Project Log";
+  const sections: MarkdownSection[] = [];
+  let current: MarkdownSection | null = null;
+  const bodyLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("# ")) continue;
+    if (line.startsWith("## ")) {
+      if (current) {
+        current.body = bodyLines.join("\n").trim();
+        sections.push(current);
+        bodyLines.length = 0;
+      }
+      current = { heading: line.replace(/^##\s+/, "").trim(), body: "" };
+      continue;
+    }
+    if (current) bodyLines.push(line);
+  }
+
+  if (current) {
+    current.body = bodyLines.join("\n").trim();
+    sections.push(current);
+  }
+
+  return { title, sections };
+}
+
+function renderMarkdownDocument(document: MarkdownDocument): string {
+  return `${document.title}
+
+${document.sections.map((section) => `## ${section.heading}
+
+${section.body.trim() || "- none"}`).join("\n\n")}
+`;
+}
+
+function renderSectionReview(section: MarkdownSection, index: number, total: number): string {
+  return `\n[${index + 1}/${total}] ${section.heading}
+
+${section.body.trim() || "- none"}
+
+`;
+}
+
+function appendBullet(body: string, bullet: string): string {
+  const normalized = bullet.startsWith("- ") ? bullet : `- ${bullet}`;
+  const trimmed = body.trim();
+  if (!trimmed || trimmed === "- none") return normalized;
+  return `${trimmed}\n${normalized}`;
+}
+
+function sectionBullets(body: string): string[] {
+  return body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.replace(/^- /, "").trim());
+}
+
+function deleteBullet(body: string, bulletIndex: number): string {
+  let seen = -1;
+  const lines = body.split(/\r?\n/).filter((line) => {
+    if (!line.trim().startsWith("- ")) return true;
+    seen += 1;
+    return seen !== bulletIndex;
+  });
+  return lines.join("\n").trim() || "- none";
 }
 
 function buildProjectLogDraft(date: string, repo: RepoContext, git: GitSnapshot, taskBriefs: string[], note?: string): ProjectLogDraft {
@@ -232,7 +423,7 @@ async function collectGitSnapshot(repoDir: string): Promise<GitSnapshot> {
     git(["diff", "--stat"], repoDir, "no diff"),
     git(["log", "--since=midnight", "--oneline", "--max-count=10"], repoDir, "")
   ]);
-  const statusLines = status.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const statusLines = status.split(/\r?\n/).filter((line) => line.trim());
   return {
     branch: branch.trim() || "unknown",
     status: statusLines,
