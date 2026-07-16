@@ -3,6 +3,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { collectCommand } from "./commands/collect.js";
 import { openDashboard, type DashboardTab } from "./commands/dashboard.js";
 import { morningCommand } from "./commands/morning.js";
+import { pageCommand } from "./commands/page.js";
 import { reportCommand } from "./commands/report.js";
 import { repositoryCommand } from "./commands/repository.js";
 import { shareCommand } from "./commands/share.js";
@@ -108,7 +109,16 @@ async function runShellCommand(targetDir: string, line: string): Promise<string>
   }
   if (command === "/morning") {
     const result = await morningCommand(targetDir, { adapter: parseOption(args, "--adapter") ?? "background-agent" });
-    return `${result}\n\nNext:\n1. Review today's plan output.\n2. Run /discover github if you need fresher candidates.\n3. Use pm-agent adjust if the plan needs correction.\n4. Use pm-agent prepare to generate Task Briefs.`;
+    return `${result}\n\nNext:\n1. Review the daily report: /page report --open\n2. Review today's implementation plan: /page plan --open\n3. Run /discover github if you need fresher candidates.\n4. Use pm-agent adjust if the plan needs correction.\n5. Use pm-agent prepare to generate Task Briefs.`;
+  }
+  if (command === "/page") {
+    const positional = args.filter((arg, index) =>
+      !arg.startsWith("--") && args[index - 1] !== "--date"
+    );
+    return pageCommand(targetDir, positional[0], positional[1], {
+      date: parseOption(args, "--date"),
+      open: args.includes("--open")
+    });
   }
   if (command === "/tasks") {
     return taskCommand(targetDir, "list", { list: args[0] });
@@ -183,6 +193,8 @@ function helpText(): string {
   return `Commands:
 /status                 Show today's report summary
 /morning [--adapter background-agent|mock]
+/page [today|status|plan|share|report|suggestions|logs|reflections|issues|tasks|breakdowns|repos] [--open] [--date YYYY-MM-DD]
+/page project <repo-id> [--open] [--date YYYY-MM-DD]
 /collect
 /dashboard [status|daily|share|suggestions|tasks|repositories|files]
 /understand [repo-dir] [--refresh] [--budget cheap|standard|deep] [--llm] [--adapter background-agent]

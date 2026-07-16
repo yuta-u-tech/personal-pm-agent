@@ -16,7 +16,7 @@ export type PageOptions = {
 type Artifact = {
   title: string;
   path: string;
-  preview?: string;
+  content?: string;
 };
 
 type MenuItem = {
@@ -448,7 +448,7 @@ ${breakdowns.length > 0 ? breakdowns.map(renderArtifactEmbed).join("\n\n---\n\n"
 async function artifact(targetDir: string, date: string, relativePath: string, title: string): Promise<Artifact | null> {
   const filePath = path.join(targetDir, "outputs", date, relativePath);
   if (!existsSync(filePath)) return null;
-  return { title, path: filePath, preview: await preview(filePath) };
+  return { title, path: filePath, content: await readFile(filePath, "utf8") };
 }
 
 async function firstExistingArtifact(targetDir: string, date: string, candidates: Array<[string, string]>): Promise<Artifact | null> {
@@ -469,7 +469,7 @@ async function artifactsIn(dir: string): Promise<Artifact[]> {
   return Promise.all(files.map(async (filePath) => ({
     title: path.basename(filePath, ".md"),
     path: filePath,
-    preview: await preview(filePath)
+    content: await readFile(filePath, "utf8")
   })));
 }
 
@@ -504,9 +504,7 @@ function renderArtifactEmbed(item: Artifact): string {
 
 Path: [${path.basename(item.path)}](${relativeLink(item.path)})
 
-\`\`\`md
-${item.preview ?? ""}
-\`\`\``;
+${item.content ?? ""}`;
 }
 
 function extractMarkdownSection(markdown: string, heading: string): string {

@@ -119,6 +119,9 @@ Then use short commands:
 ```txt
 /status
 /morning
+/page plan --open
+/page today --open
+/page project project-a --open
 /dashboard daily
 /dashboard tasks
 /dashboard repositories
