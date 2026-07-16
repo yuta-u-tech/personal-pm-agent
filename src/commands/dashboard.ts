@@ -3,6 +3,8 @@ import path from "node:path";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { today } from "../core/date.js";
 import { expandHome } from "../core/git.js";
 import { parseRepositoryLinks } from "../core/markdown.js";
@@ -38,6 +40,7 @@ type DashboardRepository = {
   name?: string;
   path?: string;
   localPath?: string;
+  remotePath?: string;
   github?: string;
   project?: string;
   context?: string;
@@ -55,6 +58,7 @@ type DashboardRepository = {
 };
 
 const dashboardServers = new Map<string, http.Server>();
+const execFileAsync = promisify(execFile);
 
 export async function dashboardCommand(targetDir: string, options: DashboardOptions = {}): Promise<string> {
   const port = Number(options.port ?? "4783");
@@ -77,7 +81,23 @@ async function ensureDashboardServer(targetDir: string, port: number): Promise<s
   const key = `${targetDir}:${port}`;
   if (dashboardServers.has(key)) return url;
 
-  const server = http.createServer(async (request, response) => {
+  let server = createDashboardServer(targetDir);
+  try {
+    await listenDashboardServer(server, port);
+  } catch (error) {
+    if (!isAddressInUseError(error)) throw error;
+    await stopExistingDashboardServer(port);
+    server.close();
+    server = createDashboardServer(targetDir);
+    await listenDashboardServer(server, port);
+  }
+
+  dashboardServers.set(key, server);
+  return url;
+}
+
+function createDashboardServer(targetDir: string): http.Server {
+  return http.createServer(async (request, response) => {
     try {
       await handleRequest(targetDir, request, response);
     } catch (error) {
@@ -85,22 +105,67 @@ async function ensureDashboardServer(targetDir: string, port: number): Promise<s
       response.end(error instanceof Error ? error.message : String(error));
     }
   });
+}
 
+async function listenDashboardServer(server: http.Server, port: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", (error: NodeJS.ErrnoException) => {
-      if (error.code === "EADDRINUSE") {
-        resolve();
-        return;
-      }
       reject(error);
     });
     server.listen(port, "127.0.0.1", () => resolve());
   });
+}
 
-  if (server.listening) {
-    dashboardServers.set(key, server);
+function isAddressInUseError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
+}
+
+async function stopExistingDashboardServer(port: number): Promise<void> {
+  const pids = await dashboardServerPidsOnPort(port);
+  for (const pid of pids) {
+    if (pid === process.pid) continue;
+    const command = await processCommand(pid);
+    if (!looksLikeDashboardCommand(command)) continue;
+    process.kill(pid, "SIGTERM");
   }
-  return url;
+  await waitForPortToClose(port);
+}
+
+async function dashboardServerPidsOnPort(port: number): Promise<number[]> {
+  try {
+    const { stdout } = await execFileAsync("lsof", [`-tiTCP:${port}`, "-sTCP:LISTEN"]);
+    return stdout
+      .split(/\s+/)
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0);
+  } catch {
+    return [];
+  }
+}
+
+async function processCommand(pid: number): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="]);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+function looksLikeDashboardCommand(command: string): boolean {
+  return /\bdashboard\b/.test(command) && /\b(pm-agent|dist\/cli\.js|src\/cli\.ts|tsx|node)\b/.test(command);
+}
+
+async function waitForPortToClose(port: number): Promise<void> {
+  const deadline = Date.now() + 2500;
+  while (Date.now() < deadline) {
+    if (!(await isPortListening(port))) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+async function isPortListening(port: number): Promise<boolean> {
+  return (await dashboardServerPidsOnPort(port)).length > 0;
 }
 
 async function handleRequest(targetDir: string, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -156,17 +221,19 @@ async function buildDashboardRepositories(targetDir: string, repositoryLinks: st
     parseRepositoryLinks(repositoryLinks).map(async (repo) => {
       const localPath = resolveRepositoryLocalPath(targetDir, repo);
       const remotePath = path.join(targetDir, ".pm-agent", "remote-repositories", repo.id);
+      const hasRemoteContext = existsSync(remotePath);
       return {
         id: repo.id,
         name: repo.name,
         path: repo.path,
         localPath,
+        remotePath: hasRemoteContext ? remotePath : undefined,
         github: repo.github,
         project: repo.project,
         context: contextById.get(repo.id) ?? contextById.get(repo.name ?? "") ?? "",
         understanding: localPath
           ? await readRepositoryUnderstanding(localPath)
-          : existsSync(remotePath)
+          : hasRemoteContext
             ? await readRemoteRepositoryUnderstanding(remotePath)
             : undefined
       };
@@ -524,37 +591,73 @@ function renderDashboardHtml(): string {
 
     .repo-layout {
       display: grid;
-      grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+      grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
       gap: 16px;
       align-items: start;
       width: 100%;
       max-width: 100%;
+      min-height: calc(100vh - 132px);
       min-width: 0;
+    }
+
+    .repo-sidebar {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 12px;
+      min-width: 0;
+      height: calc(100vh - 132px);
+      align-self: start;
+    }
+
+    .repo-sidebar-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .repo-sidebar-head h3 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .repo-count {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
     }
 
     .repo-list {
       display: grid;
-      gap: 8px;
+      gap: 10px;
       min-width: 0;
+      overflow-y: auto;
+      padding: 2px 8px 2px 0;
     }
 
     .repo-detail {
       display: grid;
-      gap: 16px;
+      gap: 14px;
       min-width: 0;
+      align-self: start;
+      position: sticky;
+      top: 0;
     }
 
     .repo-link {
-      display: block;
+      display: grid;
+      gap: 9px;
+      align-content: start;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 10px 12px;
+      border-radius: 6px;
+      padding: 12px 14px 18px;
       color: var(--text);
       text-decoration: none;
       background: #fff;
+      min-height: 154px;
       min-width: 0;
       max-width: 100%;
-      overflow: hidden;
+      overflow: visible;
     }
 
     .repo-link:hover {
@@ -564,36 +667,140 @@ function renderDashboardHtml(): string {
     .repo-link.active {
       border-color: var(--accent);
       background: var(--accent-weak);
+      box-shadow: inset 3px 0 0 var(--accent);
     }
 
     .repo-link strong {
       display: block;
       font-size: 14px;
-      line-height: 1.3;
+      line-height: 1.4;
       overflow-wrap: anywhere;
       word-break: break-word;
+      max-width: 100%;
     }
 
-    .repo-link span {
+    .repo-link small {
       display: block;
-      margin-top: 3px;
       color: var(--muted);
       font-size: 12px;
-      line-height: 1.35;
+      line-height: 1.45;
       overflow-wrap: anywhere;
       word-break: break-word;
+      max-width: 100%;
+    }
+
+    .repo-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 2px;
+    }
+
+    .repo-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      max-width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 7px;
+      color: var(--muted);
+      background: #f7f9fb;
+      font-size: 11px;
+      line-height: 1.25;
+      white-space: nowrap;
+    }
+
+    .repo-badge.on {
+      border-color: #a9cfc6;
+      color: #0f5f53;
+      background: #eef8f5;
     }
 
     .repo-meta {
-      display: grid;
-      gap: 8px;
-      margin-bottom: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
+      min-width: 0;
+      margin-bottom: 14px;
     }
 
     .repo-meta div {
+      max-width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: #fbfcfd;
       overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .repo-section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .repo-section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfd;
+    }
+
+    .repo-title {
+      min-width: 0;
+    }
+
+    .repo-title h3 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .repo-section-name {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .repo-section-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .pager-button {
+      width: 34px;
+      min-width: 34px;
+      padding: 0;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .page-position {
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 42px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .repo-section-body {
+      padding: 16px;
+      min-width: 0;
     }
 
     @media (max-width: 820px) {
@@ -606,7 +813,14 @@ function renderDashboardHtml(): string {
       }
       main { padding: 16px; }
       .grid { grid-template-columns: 1fr; }
-      .repo-layout { grid-template-columns: 1fr; }
+      .repo-layout {
+        grid-template-columns: 1fr;
+        min-height: auto;
+      }
+      .repo-sidebar { height: min(70vh, 620px); }
+      .repo-detail { position: static; }
+      .repo-section-head { grid-template-columns: 1fr; }
+      .repo-section-actions { justify-content: flex-start; flex-wrap: wrap; }
     }
   </style>
 </head>
@@ -644,7 +858,7 @@ function renderDashboardHtml(): string {
   <script>
     const params = new URLSearchParams(window.location.search);
     const initialTab = params.get("tab") || "status";
-    const state = { tab: initialTab, repo: params.get("repo") || "", data: null };
+    const state = { tab: initialTab, repo: params.get("repo") || "", section: params.get("section") || "", data: null };
     const titles = {
       status: "Status",
       daily: "Daily Report",
@@ -654,6 +868,17 @@ function renderDashboardHtml(): string {
       repositories: "Repositories",
       files: "Files"
     };
+    const repositorySections = [
+      { key: "llmProjectBrief", label: "LLM Project Brief", empty: "No LLM project brief. Run understand with --llm." },
+      { key: "llmPlanningNotes", label: "LLM Planning Notes", empty: "No LLM planning notes. Run understand with --llm." },
+      { key: "llmAreaMap", label: "LLM Area Map", empty: "No LLM area map. Run understand with --llm." },
+      { key: "llmCapabilityMap", label: "LLM Capability Map", empty: "No LLM capability map. Run understand with --llm." },
+      { key: "projectBrief", label: "Project Brief", empty: "No project brief." },
+      { key: "areaMap", label: "Area Map", empty: "No area map." },
+      { key: "capabilityMap", label: "Capability Map", empty: "No capability map." },
+      { key: "issueMap", label: "Issue Map", empty: "No issue map." },
+      { key: "safetyReport", label: "Safety Report", empty: "No safety report." }
+    ];
 
     const dateInput = document.getElementById("date");
     const content = document.getElementById("content");
@@ -815,22 +1040,43 @@ function renderDashboardHtml(): string {
       if (!repos.length) return markdownBlock(state.data.repositoryLinks, "No repositories. Run setup --select-repos or edit links/repositories.md.");
       const selected = repos.find((repo) => repo.id === state.repo) || repos[0];
       state.repo = selected.id;
+      const currentSection = selectedRepositorySection(selected);
+      const sectionIndex = repositorySections.findIndex((section) => section.key === currentSection.key);
       const list = repos.map((repo) => {
-        const href = "?tab=repositories&repo=" + encodeURIComponent(repo.id) + "&date=" + encodeURIComponent(dateInput.value);
+        const href = "?tab=repositories&repo=" + encodeURIComponent(repo.id) + "&section=" + encodeURIComponent(state.section || currentSection.key) + "&date=" + encodeURIComponent(dateInput.value);
         return '<a class="repo-link' + (repo.id === selected.id ? ' active' : '') + '" href="' + href + '" data-repo-id="' + escapeHtml(repo.id) + '">' +
           '<strong>' + escapeHtml(repo.name || repo.id) + '</strong>' +
-          '<span>' + escapeHtml(repo.github || repo.path || repo.project || repo.id) + '</span>' +
+          '<small>' + escapeHtml(repo.github || repo.project || repo.id) + '</small>' +
+          '<small>' + escapeHtml(repo.localPath || repo.path || (repo.remotePath ? "Remote context available" : "No local clone or remote context")) + '</small>' +
+          repoBadges(repo, repo.id === selected.id) +
           '</a>';
       }).join("");
       return '<div class="repo-layout">' +
-        '<div class="block"><div class="block-head"><h3>Repositories</h3><button class="copy-button" type="button" data-copy-repository="links">Copy</button></div><div class="repo-list">' + list + '</div></div>' +
+        '<div class="repo-sidebar"><div class="repo-sidebar-head"><h3>Repositories</h3><span class="repo-count">' + repos.length + ' repos</span></div><div class="repo-list">' + list + '</div><button class="copy-button" type="button" data-copy-repository="links">Copy Links</button></div>' +
         '<div class="repo-detail">' +
-        '<div class="block"><div class="block-head"><h3>' + escapeHtml(selected.name || selected.id) + '</h3><button class="copy-button" type="button" data-copy-repository="selected">Copy</button></div>' +
-        repoMetaBlock(selected) +
-        markdownBlock(selected.context || repositoryRecordText(selected), "No repository context. Run setup --select-repos or edit context/repositories.md.") +
+        '<div class="repo-section">' +
+        '<div class="repo-section-head">' +
+        '<div class="repo-title"><h3>' + escapeHtml(selected.name || selected.id) + '</h3><div class="repo-section-name">' + escapeHtml(currentSection.label) + '</div></div>' +
+        '<div class="repo-section-actions">' +
+        '<button class="pager-button" type="button" data-repo-page="-1" aria-label="Previous section">&lt;</button>' +
+        '<span class="page-position">' + (sectionIndex + 1) + ' / ' + repositorySections.length + '</span>' +
+        '<button class="pager-button" type="button" data-repo-page="1" aria-label="Next section">&gt;</button>' +
+        '<button class="copy-button" type="button" data-copy-repository="selected-section">Copy</button>' +
+        '</div></div>' +
+        '<div class="repo-section-body">' + repoMetaBlock(selected) + understandingBlock(selected, currentSection) + '</div>' +
         '</div>' +
-        understandingBlock(selected) +
         '</div>' +
+        '</div>';
+    }
+
+    function repoBadges(repo, active) {
+      const understanding = repo.understanding || {};
+      const hasLlm = Boolean((understanding.llmProjectBrief || "").trim() || (understanding.llmPlanningNotes || "").trim() || (understanding.llmAreaMap || "").trim() || (understanding.llmCapabilityMap || "").trim());
+      return '<div class="repo-badges">' +
+        '<span class="repo-badge' + (active ? ' on' : '') + '">' + (active ? 'active' : 'idle') + '</span>' +
+        '<span class="repo-badge' + (repo.localPath ? ' on' : '') + '">local</span>' +
+        '<span class="repo-badge' + (repo.remotePath ? ' on' : '') + '">remote context</span>' +
+        '<span class="repo-badge' + (hasLlm ? ' on' : '') + '">LLM</span>' +
         '</div>';
     }
 
@@ -840,27 +1086,38 @@ function renderDashboardHtml(): string {
         (repo.github ? '<div><strong>GitHub:</strong> ' + escapeHtml(repo.github) + '</div>' : '') +
         (repo.path ? '<div><strong>Local:</strong> ' + escapeHtml(repo.path) + '</div>' : '') +
         (repo.localPath && repo.localPath !== repo.path ? '<div><strong>Resolved:</strong> ' + escapeHtml(repo.localPath) + '</div>' : '') +
+        (repo.remotePath ? '<div><strong>Remote:</strong> available</div>' : '') +
         (repo.project ? '<div><strong>Project:</strong> ' + escapeHtml(repo.project) + '</div>' : '') +
         '</div>';
     }
 
-    function understandingBlock(repo) {
+    function understandingBlock(repo, section) {
       const understanding = repo.understanding || {};
-      const hasUnderstanding = Boolean((understanding.projectBrief || "").trim() || (understanding.areaMap || "").trim() || (understanding.capabilityMap || "").trim() || (understanding.issueMap || "").trim() || (understanding.safetyReport || "").trim() || (understanding.llmProjectBrief || "").trim() || (understanding.llmPlanningNotes || "").trim());
+      const hasUnderstanding = Boolean((understanding.projectBrief || "").trim() || (understanding.areaMap || "").trim() || (understanding.capabilityMap || "").trim() || (understanding.issueMap || "").trim() || (understanding.safetyReport || "").trim() || (understanding.llmProjectBrief || "").trim() || (understanding.llmPlanningNotes || "").trim() || (understanding.llmAreaMap || "").trim() || (understanding.llmCapabilityMap || "").trim());
       if (!hasUnderstanding) {
         return '<div class="empty">No understand output yet. Run pm-agent understand for this repository, then refresh the dashboard.</div>';
       }
-      return '<div class="grid">' +
-        '<div class="block"><div class="block-head"><h3>LLM Project Brief</h3><button class="copy-button" type="button" data-copy-understand="llmProjectBrief">Copy</button></div>' + markdownBlock(understanding.llmProjectBrief, "No LLM project brief. Run understand with --llm.") + '</div>' +
-        '<div class="block"><div class="block-head"><h3>LLM Planning Notes</h3><button class="copy-button" type="button" data-copy-understand="llmPlanningNotes">Copy</button></div>' + markdownBlock(understanding.llmPlanningNotes, "No LLM planning notes. Run understand with --llm.") + '</div>' +
-        '<div class="block"><div class="block-head"><h3>LLM Area Map</h3><button class="copy-button" type="button" data-copy-understand="llmAreaMap">Copy</button></div>' + markdownBlock(understanding.llmAreaMap, "No LLM area map. Run understand with --llm.") + '</div>' +
-        '<div class="block"><div class="block-head"><h3>LLM Capability Map</h3><button class="copy-button" type="button" data-copy-understand="llmCapabilityMap">Copy</button></div>' + markdownBlock(understanding.llmCapabilityMap, "No LLM capability map. Run understand with --llm.") + '</div>' +
-        '<div class="block"><div class="block-head"><h3>Project Brief</h3><button class="copy-button" type="button" data-copy-understand="projectBrief">Copy</button></div>' + markdownBlock(understanding.projectBrief, "No project brief.") + '</div>' +
-        '<div class="block"><div class="block-head"><h3>Area Map</h3><button class="copy-button" type="button" data-copy-understand="areaMap">Copy</button></div>' + markdownBlock(understanding.areaMap, "No area map.") + '</div>' +
-        '<div class="block"><div class="block-head"><h3>Capability Map</h3><button class="copy-button" type="button" data-copy-understand="capabilityMap">Copy</button></div>' + markdownBlock(understanding.capabilityMap, "No capability map.") + '</div>' +
-        '<div class="block"><div class="block-head"><h3>Issue Map</h3><button class="copy-button" type="button" data-copy-understand="issueMap">Copy</button></div>' + markdownBlock(understanding.issueMap, "No issue map.") + '</div>' +
-        '<div class="block"><div class="block-head"><h3>Safety Report</h3><button class="copy-button" type="button" data-copy-understand="safetyReport">Copy</button></div>' + markdownBlock(understanding.safetyReport, "No safety report.") + '</div>' +
-        '</div>';
+      return markdownBlock(understanding[section.key], section.empty);
+    }
+
+    function selectedRepositorySection(repo) {
+      const requested = repositorySections.find((section) => section.key === state.section);
+      if (requested) return requested;
+      const understanding = repo?.understanding || {};
+      const firstWithContent = repositorySections.find((section) => (understanding[section.key] || "").trim());
+      const selected = firstWithContent || repositorySections[0];
+      state.section = selected.key;
+      return selected;
+    }
+
+    function moveRepositorySection(delta) {
+      const selected = selectedRepository();
+      const current = selectedRepositorySection(selected);
+      const index = repositorySections.findIndex((section) => section.key === current.key);
+      const nextIndex = (index + delta + repositorySections.length) % repositorySections.length;
+      state.section = repositorySections[nextIndex].key;
+      updateUrl();
+      render();
     }
 
     function repositoryRecordText(repo) {
@@ -888,11 +1145,17 @@ function renderDashboardHtml(): string {
         copyText(state.data.repositoryLinks || "");
       } else if (repositoryGroup === "selected") {
         copyText(selectedRepositoryText());
+      } else if (repositoryGroup === "selected-section") {
+        copyText(selectedRepositorySectionText());
       }
       const understandGroup = target.dataset.copyUnderstand;
       if (understandGroup) {
         const selected = selectedRepository();
         copyText(selected?.understanding?.[understandGroup] || "");
+      }
+      const repoPage = target.dataset.repoPage;
+      if (repoPage) {
+        moveRepositorySection(Number(repoPage));
       }
     });
 
@@ -901,6 +1164,7 @@ function renderDashboardHtml(): string {
       if (!(link instanceof HTMLAnchorElement)) return;
       event.preventDefault();
       state.repo = link.dataset.repoId || "";
+      selectedRepositorySection(selectedRepository());
       updateUrl();
       render();
     });
@@ -922,7 +1186,7 @@ function renderDashboardHtml(): string {
           .join("\\n\\n");
       }
       if (state.tab === "repositories") {
-        return selectedRepositoryText();
+        return selectedRepositorySectionText();
       }
       return "";
     }
@@ -938,6 +1202,14 @@ function renderDashboardHtml(): string {
         "\\n\\n# Safety Report\\n\\n" + (understanding.safetyReport || "");
     }
 
+    function selectedRepositorySectionText() {
+      const selected = selectedRepository();
+      if (!selected) return "# Repository Links\\n\\n" + (state.data?.repositoryLinks || "");
+      const section = selectedRepositorySection(selected);
+      const understanding = selected.understanding || {};
+      return "# " + section.label + "\\n\\n" + (understanding[section.key] || "");
+    }
+
     function selectedRepository() {
       const repos = state.data?.repositories || [];
       return repos.find((repo) => repo.id === state.repo) || repos[0];
@@ -949,6 +1221,8 @@ function renderDashboardHtml(): string {
       next.set("date", dateInput.value);
       if (state.tab === "repositories" && state.repo) next.set("repo", state.repo);
       else next.delete("repo");
+      if (state.tab === "repositories" && state.section) next.set("section", state.section);
+      else next.delete("section");
       window.history.replaceState(null, "", "?" + next.toString());
     }
 
